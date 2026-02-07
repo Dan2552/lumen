@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Citadel",
+  "productName": "Lumen",
   "version": "0.1.0",
-  "identifier": "com.rebaseface.citadel",
+  "identifier": "com.rebaseface.Lumen",
   "build": {
     "frontendDist": "../src"
   },
@@ -10,7 +10,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Citadel",
+        "title": "Lumen",
         "width": 800,
         "height": 680
       }
