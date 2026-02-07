@@ -480,6 +480,66 @@ fn perform_drop_operation(
     Ok(())
 }
 
+fn resolve_home_scoped_path(home: &Path, path: &str) -> Result<PathBuf, String> {
+    let candidate = PathBuf::from(path);
+    if !candidate.is_absolute() {
+        return Err("path must be absolute".to_string());
+    }
+    if !candidate.starts_with(home) {
+        return Err("path is outside allowed root".to_string());
+    }
+    Ok(candidate)
+}
+
+fn validate_rename_name(new_name: &str) -> Result<String, String> {
+    let trimmed = new_name.trim();
+    if trimmed.is_empty() {
+        return Err("new name cannot be empty".to_string());
+    }
+    if trimmed == "." || trimmed == ".." {
+        return Err("invalid name".to_string());
+    }
+    if trimmed.contains('/') {
+        return Err("new name cannot contain '/'".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+fn move_to_trash(path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let trash_dir = home_directory().join(".Trash");
+        fs::create_dir_all(&trash_dir).map_err(|error| error.to_string())?;
+        let destination = unique_destination_path(&trash_dir, path);
+        move_path_with_fallback(path, &destination).map_err(|error| error.to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if path.is_dir() {
+            fs::remove_dir_all(path).map_err(|error| error.to_string())
+        } else {
+            fs::remove_file(path).map_err(|error| error.to_string())
+        }
+    }
+}
+
+fn remove_permanently(path: &Path) -> Result<(), String> {
+    if path.is_dir() {
+        fs::remove_dir_all(path).map_err(|error| error.to_string())
+    } else {
+        fs::remove_file(path).map_err(|error| error.to_string())
+    }
+}
+
+fn set_active_focus_after_path_change(model: &mut TabsModel, home: &Path, preferred: Option<&Path>, source: &Path) {
+    let fallback = source.parent().unwrap_or(home);
+    let next = preferred.filter(|path| path.exists()).unwrap_or(fallback);
+    let normalized = normalize_tab_path(home, Some(&next.to_string_lossy()));
+    if let Some(tab) = active_tab_mut(model) {
+        tab.focus_path = Some(normalized.to_string_lossy().to_string());
+    }
+}
+
 fn home_directory() -> PathBuf {
     env::var_os("HOME")
         .map(PathBuf::from)
@@ -836,10 +896,94 @@ pub fn show_file_context_menu(
 
     let menu = MenuBuilder::new(&window)
         .text("copy_path", "Copy path")
+        .separator()
+        .text("ctx_rename", "Rename")
+        .text("ctx_trash", "Trash")
+        .text("ctx_delete", "Delete")
         .build()
         .map_err(|error| error.to_string())?;
 
     window
         .popup_menu_at(&menu, LogicalPosition::new(x, y))
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn rename_path(
+    state: State<'_, FileTabsState>,
+    path: String,
+    new_name: String,
+) -> Result<String, String> {
+    let home = home_directory();
+    let mut model = state
+        .tabs
+        .lock()
+        .map_err(|_| "failed to lock tabs state".to_string())?;
+    ensure_tabs(&mut model, &home);
+
+    let source = resolve_home_scoped_path(&home, &path)?;
+    if source == home {
+        return Err("cannot rename root directory".to_string());
+    }
+    if !source.exists() {
+        return Err("path does not exist".to_string());
+    }
+    let name = validate_rename_name(&new_name)?;
+    let parent = source
+        .parent()
+        .ok_or_else(|| "path has no parent".to_string())?;
+    let destination = parent.join(name);
+    if destination.exists() && destination != source {
+        return Err("destination already exists".to_string());
+    }
+    if destination != source {
+        fs::rename(&source, &destination).map_err(|error| error.to_string())?;
+    }
+    set_active_focus_after_path_change(&mut model, &home, Some(&destination), &source);
+    persist_tabs_model(&model);
+    Ok(render_view(&model))
+}
+
+#[tauri::command]
+pub fn trash_path(state: State<'_, FileTabsState>, path: String) -> Result<String, String> {
+    let home = home_directory();
+    let mut model = state
+        .tabs
+        .lock()
+        .map_err(|_| "failed to lock tabs state".to_string())?;
+    ensure_tabs(&mut model, &home);
+
+    let source = resolve_home_scoped_path(&home, &path)?;
+    if source == home {
+        return Err("cannot trash root directory".to_string());
+    }
+    if !source.exists() {
+        return Err("path does not exist".to_string());
+    }
+    move_to_trash(&source)?;
+    set_active_focus_after_path_change(&mut model, &home, None, &source);
+    persist_tabs_model(&model);
+    Ok(render_view(&model))
+}
+
+#[tauri::command]
+pub fn delete_path(state: State<'_, FileTabsState>, path: String) -> Result<String, String> {
+    let home = home_directory();
+    let mut model = state
+        .tabs
+        .lock()
+        .map_err(|_| "failed to lock tabs state".to_string())?;
+    ensure_tabs(&mut model, &home);
+
+    let source = resolve_home_scoped_path(&home, &path)?;
+    if source == home {
+        return Err("cannot delete root directory".to_string());
+    }
+    if !source.exists() {
+        return Err("path does not exist".to_string());
+    }
+    remove_permanently(&source)?;
+    set_active_focus_after_path_change(&mut model, &home, None, &source);
+    persist_tabs_model(&model);
+    Ok(render_view(&model))
 }

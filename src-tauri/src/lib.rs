@@ -8,7 +8,11 @@ mod controllers {
 use controllers::file_controller;
 use std::collections::BTreeSet;
 use std::sync::Mutex;
-use tauri::{AppHandle, Manager, PhysicalPosition, Position, State, WebviewUrl, WebviewWindowBuilder};
+use serde::Serialize;
+use tauri::{
+    AppHandle, Emitter, Manager, PhysicalPosition, Position, State, WebviewUrl,
+    WebviewWindowBuilder,
+};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 #[tauri::command]
@@ -20,6 +24,12 @@ fn root(state: State<'_, file_controller::FileTabsState>) -> String {
 struct HoldState {
     paths: Mutex<Vec<String>>,
     dragging_window_labels: Mutex<BTreeSet<String>>,
+}
+
+#[derive(Serialize, Clone)]
+struct FilesContextActionEvent {
+    action: String,
+    path: String,
 }
 
 fn ensure_hold_window(app: &AppHandle) -> Result<(), tauri::Error> {
@@ -185,15 +195,35 @@ pub fn run() {
             _ => {}
         })
         .on_menu_event(|app, event| {
-            if event.id() == "copy_path" {
-                let path_to_copy = {
-                    let state = app.state::<file_controller::FileContextMenuState>();
-                    state.pending_path.lock().ok().and_then(|pending| pending.clone())
-                };
+            let path_to_copy = {
+                let state = app.state::<file_controller::FileContextMenuState>();
+                state.pending_path.lock().ok().and_then(|pending| pending.clone())
+            };
+            let Some(path) = path_to_copy else {
+                return;
+            };
 
-                if let Some(path) = path_to_copy {
-                    let _ = app.clipboard().write_text(path);
-                }
+            let menu_id = event.id().as_ref();
+            if menu_id == "copy_path" {
+                let _ = app.clipboard().write_text(path);
+                return;
+            }
+
+            if menu_id == "ctx_rename" || menu_id == "ctx_trash" || menu_id == "ctx_delete" {
+                let action = match menu_id {
+                    "ctx_rename" => "rename",
+                    "ctx_trash" => "trash",
+                    "ctx_delete" => "delete",
+                    _ => return,
+                };
+                let _ = app.emit(
+                    "files-context-action",
+                    FilesContextActionEvent {
+                        action: action.to_string(),
+                        path,
+                    },
+                );
+                return;
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -210,6 +240,9 @@ pub fn run() {
             file_controller::close_tab,
             file_controller::drop_files_into_directory,
             file_controller::show_file_context_menu,
+            file_controller::rename_path,
+            file_controller::trash_path,
+            file_controller::delete_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

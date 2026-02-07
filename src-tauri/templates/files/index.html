@@ -314,6 +314,84 @@
     .drop-hint[hidden] {
       display: none;
     }
+
+    .files-modal[hidden] {
+      display: none;
+    }
+
+    .files-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 1200;
+      background: rgba(8, 11, 18, 0.55);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .files-modal-card {
+      width: min(440px, 92vw);
+      background: #2c3342;
+      border: 1px solid #46516a;
+      border-radius: 10px;
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+      color: #d9e2f4;
+      padding: 14px;
+    }
+
+    .files-modal-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #f2f6ff;
+    }
+
+    .files-modal-message {
+      margin-top: 8px;
+      font-size: 12px;
+      color: #b7c2d8;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .files-modal-input {
+      margin-top: 10px;
+      width: 100%;
+      height: 30px;
+      border-radius: 7px;
+      border: 1px solid #4b5771;
+      background: #1f2532;
+      color: #eaf1ff;
+      font: inherit;
+      font-size: 12px;
+      padding: 0 10px;
+      box-sizing: border-box;
+    }
+
+    .files-modal-actions {
+      margin-top: 12px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .files-modal-button {
+      min-width: 84px;
+      height: 28px;
+      border-radius: 7px;
+      border: 1px solid #53607b;
+      background: #3c465c;
+      color: #e4ecff;
+      font: inherit;
+      font-size: 12px;
+      cursor: default;
+    }
+
+    .files-modal-button.is-danger {
+      border-color: #85454b;
+      background: #6f3037;
+      color: #ffe4e7;
+    }
   </style>
 
   <div class="tabs-bar">
@@ -383,6 +461,17 @@
     <div class="drop-hint-title" id="drop-hint-title"></div>
     <div class="drop-hint-subtitle" id="drop-hint-subtitle"></div>
   </div>
+  <div id="files-modal" class="files-modal" hidden>
+    <div class="files-modal-card" role="dialog" aria-modal="true" aria-labelledby="files-modal-title">
+      <div class="files-modal-title" id="files-modal-title"></div>
+      <div class="files-modal-message" id="files-modal-message"></div>
+      <input id="files-modal-input" class="files-modal-input" type="text" hidden />
+      <div class="files-modal-actions">
+        <button id="files-modal-cancel" class="files-modal-button" type="button">Cancel</button>
+        <button id="files-modal-confirm" class="files-modal-button" type="button">OK</button>
+      </div>
+    </div>
+  </div>
 
   <script>
     (() => {
@@ -415,11 +504,19 @@
       const dropHint = root.querySelector("#drop-hint");
       const dropHintTitle = root.querySelector("#drop-hint-title");
       const dropHintSubtitle = root.querySelector("#drop-hint-subtitle");
+      const modalRoot = root.querySelector("#files-modal");
+      const modalTitle = root.querySelector("#files-modal-title");
+      const modalMessage = root.querySelector("#files-modal-message");
+      const modalInput = root.querySelector("#files-modal-input");
+      const modalCancel = root.querySelector("#files-modal-cancel");
+      const modalConfirm = root.querySelector("#files-modal-confirm");
       let dropTargetColumn = null;
       let externalDragPaths = [];
       let externalDragPoint = null;
       let dragDropUnlisten = null;
+      let contextActionUnlisten = null;
       let optionPressed = false;
+      let modalResolve = null;
       window.__filesScrollStateByTab = window.__filesScrollStateByTab || {};
       const getScrollState = () => window.__filesScrollStateByTab[activeTabId] || null;
       const saveScrollState = () => {
@@ -878,6 +975,145 @@
         }
       }
 
+      const showContextMenu = (payload) => {
+        const invoke = window.__TAURI__?.core?.invoke;
+        if (typeof invoke !== "function") return;
+        invoke("show_file_context_menu", payload).catch(() => {});
+      };
+      const htmxCommandSwap = (command, values) =>
+        window.htmx?.ajax?.("GET", `command/${command}`, {
+          target: "#main-root",
+          swap: "outerHTML",
+          values,
+        });
+      const bindContextActionEvents = () => {
+        const listen = window.__TAURI__?.event?.listen;
+        if (typeof listen !== "function") return;
+        Promise.resolve(
+          listen("files-context-action", async (event) => {
+            const action = event?.payload?.action || "";
+            const path = event?.payload?.path || "";
+            if (!action || !path) return;
+            logNav("context action", {action, path});
+            const name = path.split("/").filter(Boolean).at(-1) || path;
+
+            const normalized = String(action).toLowerCase();
+            if (normalized.includes("rename")) {
+              const result = await openFilesModal({
+                title: "Rename",
+                message: "Enter a new name:",
+                confirmLabel: "Rename",
+                kind: "prompt",
+                initialValue: name,
+              });
+              if (!result.confirmed) return;
+              const trimmed = String(result.value || "").trim();
+              if (!trimmed || trimmed === name) return;
+              logNav("context rename submit", {path, newName: trimmed});
+              htmxCommandSwap("rename_path", {path, newName: trimmed});
+              return;
+            }
+
+            if (normalized.includes("trash")) {
+              const result = await openFilesModal({
+                title: "Move to Trash",
+                message: `Move "${name}" to Trash?`,
+                confirmLabel: "Trash",
+                kind: "confirm",
+              });
+              if (!result.confirmed) return;
+              logNav("context trash confirm", {path});
+              htmxCommandSwap("trash_path", {path});
+              return;
+            }
+
+            if (normalized.includes("delete")) {
+              const result = await openFilesModal({
+                title: "Delete Permanently",
+                message: `Delete "${name}" permanently?\nThis cannot be undone.`,
+                confirmLabel: "Delete",
+                kind: "danger",
+              });
+              if (!result.confirmed) return;
+              logNav("context delete confirm", {path});
+              htmxCommandSwap("delete_path", {path});
+            }
+          }),
+        )
+          .then((unlisten) => {
+            contextActionUnlisten = typeof unlisten === "function" ? unlisten : null;
+          })
+          .catch((error) => {
+            logNav("context action listen failed", {error: String(error)});
+          });
+      };
+      bindContextActionEvents();
+      const closeFilesModal = (result) => {
+        if (!modalRoot || !modalResolve) return;
+        modalRoot.hidden = true;
+        modalConfirm.classList.remove("is-danger");
+        const resolve = modalResolve;
+        modalResolve = null;
+        resolve(result);
+      };
+      const openFilesModal = ({title, message, confirmLabel, kind, initialValue = ""}) =>
+        new Promise((resolve) => {
+          if (!modalRoot) {
+            resolve({confirmed: false, value: ""});
+            return;
+          }
+          modalResolve = resolve;
+          modalTitle.textContent = title || "";
+          modalMessage.textContent = message || "";
+          modalConfirm.textContent = confirmLabel || "OK";
+          const wantsInput = kind === "prompt";
+          modalInput.hidden = !wantsInput;
+          modalInput.value = wantsInput ? initialValue : "";
+          modalConfirm.classList.toggle("is-danger", kind === "danger");
+          modalRoot.hidden = false;
+          if (wantsInput) {
+            setTimeout(() => {
+              modalInput.focus();
+              modalInput.select();
+            }, 0);
+          } else {
+            setTimeout(() => {
+              modalConfirm.focus();
+            }, 0);
+          }
+        });
+      if (modalCancel) {
+        modalCancel.addEventListener("click", () => {
+          closeFilesModal({confirmed: false, value: ""});
+        });
+      }
+      if (modalConfirm) {
+        modalConfirm.addEventListener("click", () => {
+          closeFilesModal({
+            confirmed: true,
+            value: modalInput.hidden ? "" : modalInput.value,
+          });
+        });
+      }
+      if (modalInput) {
+        modalInput.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            closeFilesModal({confirmed: true, value: modalInput.value});
+          } else if (event.key === "Escape") {
+            event.preventDefault();
+            closeFilesModal({confirmed: false, value: ""});
+          }
+        });
+      }
+      if (modalRoot) {
+        modalRoot.addEventListener("mousedown", (event) => {
+          if (event.target === modalRoot) {
+            closeFilesModal({confirmed: false, value: ""});
+          }
+        });
+      }
+
       root.addEventListener("click", (event) => {
         const row = event.target.closest(".finder-row");
         if (!row) return;
@@ -903,16 +1139,29 @@
 
       root.addEventListener("contextmenu", (event) => {
         const row = event.target.closest(".finder-row");
-        if (!row) return;
+        if (row) {
+          event.preventDefault();
+          logNav("contextmenu", {path: row.dataset.path, column: row.dataset.column});
+          window.__filesPendingContextMenu = {
+            path: row.dataset.path,
+            x: event.clientX,
+            y: event.clientY,
+          };
+          row.click();
+          return;
+        }
 
+        const header = event.target.closest(".column-header");
+        if (!header) return;
         event.preventDefault();
-        logNav("contextmenu", {path: row.dataset.path, column: row.dataset.column});
-        window.__filesPendingContextMenu = {
-          path: row.dataset.path,
+        const path = header.dataset.path || "";
+        if (!path) return;
+        logNav("contextmenu header", {path});
+        showContextMenu({
+          path,
           x: event.clientX,
           y: event.clientY,
-        };
-        row.click();
+        });
       });
       root.addEventListener("dragstart", (event) => {
         const row = event.target.closest(".finder-row");
@@ -1153,6 +1402,10 @@
           if (typeof dragDropUnlisten === "function") {
             dragDropUnlisten();
             dragDropUnlisten = null;
+          }
+          if (typeof contextActionUnlisten === "function") {
+            contextActionUnlisten();
+            contextActionUnlisten = null;
           }
           saveScrollState();
           document.removeEventListener("keydown", onKeyDown);

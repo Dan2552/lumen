@@ -1,5 +1,5 @@
 <section class="finder-column" data-column="{{ column_index }}" data-path="{{ column.path }}">
-  <div class="column-header">{{ column.title }}</div>
+  <div class="column-header" data-path="{{ column.path }}" data-is-dir="true">{{ column.title }}</div>
   <div class="column-body">
     {% set selected_path = column.selected_path %}
     {% for entry in column.entries %}
