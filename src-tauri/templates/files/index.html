@@ -116,6 +116,74 @@
       flex-direction: column;
     }
 
+    .preview-pane {
+      width: 360px;
+      min-width: 300px;
+      border-left: 1px solid #404759;
+      background: rgba(30, 36, 48, 0.72);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .preview-header {
+      padding: 10px 12px;
+      border-bottom: 1px solid #3b4354;
+      background: rgba(28, 34, 46, 0.78);
+    }
+
+    .preview-title {
+      color: #dce3f2;
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      overflow: hidden;
+    }
+
+    .preview-subtitle {
+      color: #97a1b6;
+      font-size: 11px;
+      margin-top: 2px;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      overflow: hidden;
+    }
+
+    .preview-body {
+      flex: 1;
+      overflow: auto;
+      padding: 12px;
+    }
+
+    .preview-image {
+      width: 100%;
+      height: auto;
+      object-fit: contain;
+      border-radius: 8px;
+      border: 1px solid #46506a;
+      background: rgba(17, 22, 32, 0.8);
+    }
+
+    .preview-text {
+      margin: 0;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      color: #c8d0df;
+      font-size: 12px;
+      line-height: 1.5;
+      background: rgba(17, 22, 32, 0.7);
+      border: 1px solid #46506a;
+      border-radius: 8px;
+      padding: 10px;
+      font-family: "SF Mono", "Menlo", "Consolas", monospace;
+    }
+
+    .preview-note {
+      margin-top: 10px;
+      color: #95a1b8;
+      font-size: 11px;
+    }
+
     .column-header {
       padding: 8px 12px;
       font-size: 12px;
@@ -247,6 +315,25 @@
       {% set column_index = loop.index0 %}
       {% include "files/_column.html" %}
     {% endfor %}
+
+    {% if preview %}
+    <aside class="preview-pane">
+      <div class="preview-header">
+        <div class="preview-title">{{ preview.title }}</div>
+        <div class="preview-subtitle">{{ preview.subtitle }}</div>
+      </div>
+      <div class="preview-body">
+        {% if preview.kind == "image" and preview.image_data_url %}
+          <img class="preview-image" src="{{ preview.image_data_url }}" alt="{{ preview.title }}">
+        {% elif preview.kind == "text" and preview.text_head %}
+          <pre class="preview-text">{{ preview.text_head }}</pre>
+        {% endif %}
+        {% if preview.note %}
+          <div class="preview-note">{{ preview.note }}</div>
+        {% endif %}
+      </div>
+    </aside>
+    {% endif %}
   </div>
 
   <script>

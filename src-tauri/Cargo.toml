@@ -29,3 +29,4 @@ uuid = { version = "1.13.1", features = ["v4", "fast-rng"] }
 tauri-plugin-clipboard-manager = "2.2.2"
 tokio = { version = "1.45.0", features = ["full"] }
 include_dir = { version = "0.7.4", features = ["glob"] }
+base64 = "0.22.1"

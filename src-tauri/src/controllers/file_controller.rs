@@ -2,9 +2,11 @@ use serde::Serialize;
 use std::{
     env, fs,
     io::Write,
+    io::Read,
     path::{Path, PathBuf},
     sync::Mutex,
 };
+use base64::{engine::general_purpose::STANDARD, Engine};
 use tauri::{
     menu::MenuBuilder, AppHandle, LogicalPosition, Manager, PhysicalPosition, PhysicalSize,
     Runtime, State, Window,
@@ -24,6 +26,16 @@ struct Column {
     title: String,
     entries: Vec<FileEntry>,
     selected_path: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct PreviewModel {
+    kind: String,
+    title: String,
+    subtitle: String,
+    image_data_url: Option<String>,
+    text_head: Option<String>,
+    note: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -151,6 +163,121 @@ fn icon_for_entry(name: &str, is_dir: bool) -> &'static str {
     }
 }
 
+fn image_mime_from_ext(ext: &str) -> Option<&'static str> {
+    match ext {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        "svg" => Some("image/svg+xml"),
+        "bmp" => Some("image/bmp"),
+        "ico" => Some("image/x-icon"),
+        "avif" => Some("image/avif"),
+        "heic" => Some("image/heic"),
+        _ => None,
+    }
+}
+
+fn is_previewable_text_ext(ext: &str) -> bool {
+    matches!(
+        ext,
+        "txt"
+            | "md"
+            | "rs"
+            | "js"
+            | "ts"
+            | "jsx"
+            | "tsx"
+            | "json"
+            | "toml"
+            | "yaml"
+            | "yml"
+            | "html"
+            | "css"
+            | "scss"
+            | "xml"
+            | "sh"
+            | "zsh"
+            | "bash"
+            | "py"
+            | "go"
+            | "java"
+            | "c"
+            | "cpp"
+            | "h"
+            | "hpp"
+            | "csv"
+            | "log"
+    )
+}
+
+fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
+    let path = focus_path?;
+    if !path.is_file() {
+        return None;
+    }
+
+    let file_name = label_from_path(path);
+    let subtitle = path.to_string_lossy().to_string();
+    let ext = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+
+    if let Some(mime) = image_mime_from_ext(&ext) {
+        const MAX_IMAGE_PREVIEW_BYTES: u64 = 8 * 1024 * 1024;
+        let file_size = fs::metadata(path).ok().map(|meta| meta.len()).unwrap_or(0);
+        if file_size > MAX_IMAGE_PREVIEW_BYTES {
+            return Some(PreviewModel {
+                kind: "image".to_string(),
+                title: file_name,
+                subtitle,
+                image_data_url: None,
+                text_head: None,
+                note: Some("Image is too large for inline preview.".to_string()),
+            });
+        }
+
+        let bytes = fs::read(path).ok()?;
+        let data_url = format!("data:{mime};base64,{}", STANDARD.encode(bytes));
+        return Some(PreviewModel {
+            kind: "image".to_string(),
+            title: file_name,
+            subtitle,
+            image_data_url: Some(data_url),
+            text_head: None,
+            note: None,
+        });
+    }
+
+    if is_previewable_text_ext(&ext) {
+        const MAX_TEXT_PREVIEW_BYTES: usize = 16 * 1024;
+        let mut file = fs::File::open(path).ok()?;
+        let mut buffer = vec![0u8; MAX_TEXT_PREVIEW_BYTES];
+        let read = file.read(&mut buffer).ok()?;
+        buffer.truncate(read);
+        let text = String::from_utf8_lossy(&buffer).to_string();
+        return Some(PreviewModel {
+            kind: "text".to_string(),
+            title: file_name,
+            subtitle,
+            image_data_url: None,
+            text_head: Some(text),
+            note: Some("Showing the first 16KB.".to_string()),
+        });
+    }
+
+    Some(PreviewModel {
+        kind: "unknown".to_string(),
+        title: file_name,
+        subtitle,
+        image_data_url: None,
+        text_head: None,
+        note: Some("No preview available for this file type yet.".to_string()),
+    })
+}
+
 fn selected_or_default(entries: &[FileEntry], preferred: Option<&Path>) -> String {
     if let Some(preferred_path) = preferred {
         let preferred_str = preferred_path.to_string_lossy().to_string();
@@ -246,7 +373,7 @@ fn build_columns(home: &Path, focus_path: Option<&Path>) -> Vec<Column> {
         });
     }
 
-    if !second_selected.is_empty() {
+    if !second_selected.is_empty() && is_directory(Path::new(&second_selected)) {
         columns.push(Column {
             title: label_from_path(Path::new(&second_selected)),
             entries: third_entries,
@@ -416,6 +543,7 @@ fn render_view(model: &TabsModel) -> String {
         .and_then(|tab| tab.focus_path.clone())
         .map(PathBuf::from);
     let columns = build_columns(&home, active_focus_path.as_deref());
+    let preview = build_preview(active_focus_path.as_deref());
     let active_path_for_new = active_focus_path
         .as_ref()
         .map(|path| path.to_string_lossy().to_string())
@@ -441,6 +569,7 @@ fn render_view(model: &TabsModel) -> String {
     context.insert("tabs", &tabs);
     context.insert("active_path", &active_path_for_new);
     context.insert("active_tab_id", &model.active_id.to_string());
+    context.insert("preview", &preview);
 
     // context.insert("user_needs_to_setup_biometrics", &user_needs_to_setup_biometrics);
     render!("files/index", &context)
