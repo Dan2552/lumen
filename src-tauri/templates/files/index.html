@@ -104,7 +104,8 @@
       height: calc(100% - 36px);
       background: linear-gradient(180deg, #323949 0%, #2b313f 100%);
       border-right: 1px solid #404759;
-      overflow: hidden;
+      overflow-x: auto;
+      overflow-y: hidden;
     }
 
     .finder-column {
@@ -356,6 +357,8 @@
       const rows = Array.from(root.querySelectorAll(".finder-row"));
       if (rows.length === 0) return;
       const columns = Array.from(root.querySelectorAll(".finder-column"));
+      const layout = root.querySelector(".finder-layout");
+      const previewPane = layout?.querySelector(".preview-pane") || null;
       logNav("init", {
         activeTabId,
         rows: rows.length,
@@ -381,6 +384,50 @@
       const setActiveColumn = (columnIndex) => {
         for (const column of columns) {
           column.classList.toggle("is-active", Number(column.dataset.column) === columnIndex);
+        }
+      };
+      const ensureColumnAndNextVisible = (columnIndex) => {
+        if (!layout) return;
+        const currentColumn = columns.find((column) => Number(column.dataset.column || 0) === columnIndex);
+        if (!currentColumn) return;
+        const nextColumn = columns.find((column) => Number(column.dataset.column || 0) === columnIndex + 1);
+        const targetColumn = nextColumn || previewPane || currentColumn;
+        const currentLeft = currentColumn.offsetLeft;
+        const targetRight = targetColumn.offsetLeft + targetColumn.offsetWidth;
+        const viewportLeft = layout.scrollLeft;
+        const viewportRight = viewportLeft + layout.clientWidth;
+        const margin = 8;
+        let desiredLeft = viewportLeft;
+
+        if (currentLeft < viewportLeft + margin) {
+          desiredLeft = currentLeft - margin;
+        }
+        if (targetRight > desiredLeft + layout.clientWidth - margin) {
+          desiredLeft = targetRight - layout.clientWidth + margin;
+        }
+
+        const maxLeft = Math.max(0, layout.scrollWidth - layout.clientWidth);
+        desiredLeft = Math.max(0, Math.min(maxLeft, desiredLeft));
+        if (desiredLeft !== layout.scrollLeft) {
+          layout.scrollLeft = desiredLeft;
+        }
+      };
+      const ensureRowVisible = (row) => {
+        if (!row) return;
+        const body = row.closest(".column-body");
+        if (!body) return;
+        const bodyRect = body.getBoundingClientRect();
+        const rowRect = row.getBoundingClientRect();
+        const rowTop = rowRect.top - bodyRect.top + body.scrollTop;
+        const rowBottom = rowTop + rowRect.height;
+        const viewTop = body.scrollTop;
+        const viewBottom = viewTop + body.clientHeight;
+        const threshold = 1;
+
+        if (rowTop < viewTop - threshold) {
+          body.scrollTop = rowTop;
+        } else if (rowBottom > viewBottom + threshold) {
+          body.scrollTop = rowBottom - body.clientHeight;
         }
       };
       const setRowSelectedLocally = (row) => {
@@ -434,7 +481,10 @@
         });
         setFocusPath(initialRow.dataset.path);
         initialRow.focus({preventScroll: true});
-        setActiveColumn(Number(initialRow.dataset.column || 0));
+        const initialColumnIndex = Number(initialRow.dataset.column || 0);
+        setActiveColumn(initialColumnIndex);
+        ensureRowVisible(initialRow);
+        ensureColumnAndNextVisible(initialColumnIndex);
         if (shouldCommitInitialFromRight) {
           setRowSelectedLocally(initialRow);
           setTimeout(() => {
@@ -469,7 +519,10 @@
         if (!row) return;
         logNav("row click", {path: row.dataset.path, column: row.dataset.column, isDir: row.dataset.isDir});
         setFocusPath(row.dataset.path);
-        setActiveColumn(Number(row.dataset.column || 0));
+        const columnIndex = Number(row.dataset.column || 0);
+        setActiveColumn(columnIndex);
+        ensureRowVisible(row);
+        ensureColumnAndNextVisible(columnIndex);
       });
 
       root.addEventListener("contextmenu", (event) => {
@@ -499,6 +552,7 @@
         const activeTag = document.activeElement?.tagName || "";
         if (activeTag === "INPUT" || activeTag === "TEXTAREA" || activeTag === "SELECT") return;
         if (document.activeElement?.isContentEditable) return;
+        event.preventDefault();
 
         const current =
           (root.contains(document.activeElement) && document.activeElement.classList.contains("finder-row")
@@ -521,6 +575,8 @@
             setFocusPath(firstColumnRow.dataset.path);
             firstColumnRow.focus({preventScroll: true});
             setActiveColumn(0);
+            ensureRowVisible(firstColumnRow);
+            ensureColumnAndNextVisible(0);
             firstColumnRow.click();
           }
           return;
@@ -550,7 +606,6 @@
               column: current.dataset.column,
               action: "set pending right and click current",
             });
-            event.preventDefault();
             window.__filesPendingRightFromPath = current.dataset.path;
             setFocusPath(current.dataset.path);
             current.click();
@@ -565,10 +620,12 @@
 
         if (!target) return;
 
-        event.preventDefault();
         setFocusPath(target.dataset.path);
         target.focus({preventScroll: true});
-        setActiveColumn(Number(target.dataset.column || 0));
+        const targetColumnIndex = Number(target.dataset.column || 0);
+        setActiveColumn(targetColumnIndex);
+        ensureRowVisible(target);
+        ensureColumnAndNextVisible(targetColumnIndex);
         if (shouldNavigate) {
           target.click();
         }
