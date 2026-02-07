@@ -199,6 +199,7 @@
       flex: 1;
       overflow-y: auto;
       padding: 6px 0;
+      overflow-anchor: none;
     }
 
     .finder-row {
@@ -343,9 +344,14 @@
       if (!root) return;
       const activeTabId = root.dataset.activeTabId || "default";
       const DEBUG_NAV = true;
+      const DEBUG_SCROLL = true;
       const logNav = (...args) => {
         if (!DEBUG_NAV) return;
         console.debug("[files-nav]", ...args);
+      };
+      const logScroll = (...args) => {
+        if (!DEBUG_SCROLL) return;
+        console.debug("[files-scroll]", ...args);
       };
       window.__filesFocusPathByTab = window.__filesFocusPathByTab || {};
       const getFocusPath = () => window.__filesFocusPathByTab[activeTabId] || null;
@@ -359,6 +365,37 @@
       const columns = Array.from(root.querySelectorAll(".finder-column"));
       const layout = root.querySelector(".finder-layout");
       const previewPane = layout?.querySelector(".preview-pane") || null;
+      window.__filesScrollStateByTab = window.__filesScrollStateByTab || {};
+      const getScrollState = () => window.__filesScrollStateByTab[activeTabId] || null;
+      const saveScrollState = () => {
+        const state = {
+          layoutLeft: layout?.scrollLeft || 0,
+          columnTops: {},
+        };
+        for (const body of root.querySelectorAll(".column-body")) {
+          const column = body.closest(".finder-column");
+          const columnIndex = Number(column?.dataset?.column || 0);
+          state.columnTops[columnIndex] = body.scrollTop;
+        }
+        window.__filesScrollStateByTab[activeTabId] = state;
+        logScroll("saveScrollState", state);
+      };
+      const restoreScrollState = () => {
+        const state = getScrollState();
+        if (!state) return;
+        if (layout && Number.isFinite(state.layoutLeft)) {
+          layout.scrollLeft = state.layoutLeft;
+        }
+        for (const body of root.querySelectorAll(".column-body")) {
+          const column = body.closest(".finder-column");
+          const columnIndex = Number(column?.dataset?.column || 0);
+          const top = state.columnTops?.[columnIndex];
+          if (Number.isFinite(top)) {
+            body.scrollTop = top;
+          }
+        }
+        logScroll("restoreScrollState", state);
+      };
       logNav("init", {
         activeTabId,
         rows: rows.length,
@@ -416,18 +453,51 @@
         if (!row) return;
         const body = row.closest(".column-body");
         if (!body) return;
-        const bodyRect = body.getBoundingClientRect();
-        const rowRect = row.getBoundingClientRect();
-        const rowTop = rowRect.top - bodyRect.top + body.scrollTop;
-        const rowBottom = rowTop + rowRect.height;
         const viewTop = body.scrollTop;
         const viewBottom = viewTop + body.clientHeight;
-        const threshold = 1;
+        const rowTop = row.offsetTop;
+        const rowBottom = rowTop + row.offsetHeight;
+        const bodyRect = body.getBoundingClientRect();
+        const rowRect = row.getBoundingClientRect();
+        const topInset = 2;
+        const bottomInset = 2;
+        const isVisibleByRect =
+          rowRect.top >= bodyRect.top + topInset && rowRect.bottom <= bodyRect.bottom - bottomInset;
 
-        if (rowTop < viewTop - threshold) {
-          body.scrollTop = rowTop;
-        } else if (rowBottom > viewBottom + threshold) {
-          body.scrollTop = rowBottom - body.clientHeight;
+        // If the row is already fully visible, never touch scroll.
+        if (isVisibleByRect) {
+          logScroll("ensureRowVisible noop-visible", {
+            path: row.dataset.path,
+            rowTop,
+            rowBottom,
+            viewTop,
+            viewBottom,
+            rowRectTop: rowRect.top,
+            rowRectBottom: rowRect.bottom,
+            bodyRectTop: bodyRect.top,
+            bodyRectBottom: bodyRect.bottom,
+          });
+          return;
+        }
+
+        if (rowRect.top < bodyRect.top + topInset) {
+          const delta = rowRect.top - (bodyRect.top + topInset);
+          const next = Math.max(0, body.scrollTop + delta);
+          logScroll("ensureRowVisible up", {
+            path: row.dataset.path,
+            from: body.scrollTop,
+            to: next,
+          });
+          body.scrollTop = next;
+        } else if (rowRect.bottom > bodyRect.bottom - bottomInset) {
+          const delta = rowRect.bottom - (bodyRect.bottom - bottomInset);
+          const next = Math.max(0, body.scrollTop + delta);
+          logScroll("ensureRowVisible down", {
+            path: row.dataset.path,
+            from: body.scrollTop,
+            to: next,
+          });
+          body.scrollTop = next;
         }
       };
       const setRowSelectedLocally = (row) => {
@@ -472,6 +542,7 @@
           : null;
       const rememberedRow = rows.find((row) => row.dataset.path === getFocusPath());
       const initialRow = initialFromRight || focusedRow || rememberedRow || rightmostSelected() || null;
+      restoreScrollState();
 
       if (initialRow) {
         logNav("initialRow", {
@@ -519,10 +590,17 @@
         if (!row) return;
         logNav("row click", {path: row.dataset.path, column: row.dataset.column, isDir: row.dataset.isDir});
         setFocusPath(row.dataset.path);
+        row.focus({preventScroll: true});
         const columnIndex = Number(row.dataset.column || 0);
         setActiveColumn(columnIndex);
         ensureRowVisible(row);
         ensureColumnAndNextVisible(columnIndex);
+      });
+
+      root.addEventListener("mousedown", (event) => {
+        const row = event.target.closest(".finder-row");
+        if (!row) return;
+        event.preventDefault();
       });
 
       root.addEventListener("contextmenu", (event) => {
@@ -542,9 +620,19 @@
       root.addEventListener("focusin", (event) => {
         const row = event.target.closest(".finder-row");
         if (!row) return;
+        logScroll("focusin", {
+          path: row.dataset.path,
+          bodyTop: row.closest(".column-body")?.scrollTop ?? null,
+        });
         setFocusPath(row.dataset.path);
         setActiveColumn(Number(row.dataset.column || 0));
       });
+
+      for (const body of root.querySelectorAll(".column-body")) {
+        body.addEventListener("scroll", () => {
+          logScroll("column-body scroll", {top: body.scrollTop});
+        });
+      }
 
       const onKeyDown = (event) => {
         if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
@@ -632,9 +720,13 @@
       };
 
       document.addEventListener("keydown", onKeyDown);
+      root.addEventListener("htmx:beforeRequest", () => {
+        saveScrollState();
+      });
       root.addEventListener(
         "htmx:beforeCleanupElement",
         () => {
+          saveScrollState();
           document.removeEventListener("keydown", onKeyDown);
         },
         {once: true},
