@@ -14,6 +14,23 @@ fn root(state: State<'_, file_controller::FileTabsState>) -> String {
     file_controller::index(state)
 }
 
+#[tauri::command]
+fn is_alt_pressed() -> bool {
+    #[cfg(target_os = "macos")]
+    unsafe {
+        use objc::{class, msg_send, sel, sel_impl};
+        // NSEventModifierFlagOption
+        const OPTION_FLAG: u64 = 1 << 19;
+        let flags: u64 = msg_send![class!(NSEvent), modifierFlags];
+        return (flags & OPTION_FLAG) != 0;
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -49,6 +66,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             root,
+            is_alt_pressed,
             file_controller::index,
             file_controller::navigate,
             file_controller::activate_tab,

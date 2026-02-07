@@ -813,6 +813,7 @@
         const startDrag = window.__TAURI__?.drag?.startDrag;
         if (typeof startDrag === "function") {
           event.preventDefault();
+          optionPressed = !!event.altKey;
           startDrag({
             item: [path],
             icon: DRAG_ICON_BYTES,
@@ -957,13 +958,21 @@
         }
       };
 
+      window.addEventListener("dragover", (event) => {
+        optionPressed = !!event.altKey;
+        if (dropTargetColumn && externalDragPoint) {
+          updateDropHint(externalDragPoint.x, externalDragPoint.y, dropTargetColumn.dataset.path || "");
+        }
+      });
+
       const bindExternalDrop = () => {
         const getCurrentWindow = window.__TAURI__?.window?.getCurrentWindow;
         if (typeof getCurrentWindow !== "function") return;
         const currentWindow = getCurrentWindow();
         if (!currentWindow || typeof currentWindow.onDragDropEvent !== "function") return;
+        const invoke = window.__TAURI__?.core?.invoke;
         Promise.resolve(
-          currentWindow.onDragDropEvent((event) => {
+          currentWindow.onDragDropEvent(async (event) => {
             const payload = event?.payload || {};
             const type = payload.type;
             if (type === "leave") {
@@ -975,6 +984,15 @@
             if (type !== "over" && type !== "enter" && type !== "drop") {
               return;
             }
+
+            if (typeof invoke === "function") {
+              try {
+                optionPressed = !!(await invoke("is_alt_pressed"));
+              } catch (_error) {
+                // Keep previous value if native modifier query fails.
+              }
+            }
+
             const sourcePaths = Array.isArray(payload.paths) ? payload.paths : [];
             if (sourcePaths.length > 0) {
               externalDragPaths = sourcePaths;
