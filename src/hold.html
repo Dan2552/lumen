@@ -47,7 +47,8 @@
       }
 
       .drop-area.is-over {
-        background: rgba(255, 255, 255, 0.08);
+        background: rgba(48, 74, 120, 0.4);
+        box-shadow: inset 0 0 0 1px rgba(118, 167, 255, 0.6);
       }
 
       .title {
@@ -157,8 +158,78 @@
         const invoke = window.__TAURI__?.core?.invoke;
         const getCurrentWindow = window.__TAURI__?.window?.getCurrentWindow;
         const startDrag = window.__TAURI__?.drag?.startDrag;
-        const DRAG_ICON_BYTES = [137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,8,6,0,0,0,31,21,196,137,0,0,0,11,73,68,65,84,120,218,99,252,255,31,0,3,3,2,0,239,201,202,170,0,0,0,0,73,69,78,68,174,66,96,130];
         let heldPaths = [];
+        const dragIconCache = new Map();
+        const clampName = (name) => {
+          const limit = 34;
+          if (!name || name.length <= limit) return name || "item";
+          return `${name.slice(0, limit - 1)}\u2026`;
+        };
+        const pngDataUrlToBytes = (dataUrl) => {
+          const encoded = dataUrl.split(",")[1] || "";
+          const raw = atob(encoded);
+          const bytes = new Array(raw.length);
+          for (let i = 0; i < raw.length; i += 1) {
+            bytes[i] = raw.charCodeAt(i);
+          }
+          return bytes;
+        };
+        const makeRowDragIcon = (name) => {
+          const key = `f:${name}`;
+          if (dragIconCache.has(key)) {
+            return dragIconCache.get(key);
+          }
+          const width = 260;
+          const height = 32;
+          const radius = 6;
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            return [];
+          }
+          ctx.clearRect(0, 0, width, height);
+          ctx.fillStyle = "#1f5fbf";
+          ctx.strokeStyle = "#2f86e9";
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(radius, 0);
+          ctx.lineTo(width - radius, 0);
+          ctx.quadraticCurveTo(width, 0, width, radius);
+          ctx.lineTo(width, height - radius);
+          ctx.quadraticCurveTo(width, height, width - radius, height);
+          ctx.lineTo(radius, height);
+          ctx.quadraticCurveTo(0, height, 0, height - radius);
+          ctx.lineTo(0, radius);
+          ctx.quadraticCurveTo(0, 0, radius, 0);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+          ctx.strokeStyle = "#c7dafc";
+          ctx.fillStyle = "transparent";
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(11.5, 9.5);
+          ctx.lineTo(20, 9.5);
+          ctx.lineTo(24.5, 14);
+          ctx.lineTo(24.5, 22.5);
+          ctx.lineTo(11.5, 22.5);
+          ctx.closePath();
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(20, 9.5);
+          ctx.lineTo(20, 14);
+          ctx.lineTo(24.5, 14);
+          ctx.stroke();
+          ctx.fillStyle = "#f3f6ff";
+          ctx.font = '600 13px "SF Pro Text", "Segoe UI", sans-serif';
+          ctx.textBaseline = "middle";
+          ctx.fillText(clampName(name), 30, Math.round(height / 2) + 0.5);
+          const bytes = pngDataUrlToBytes(canvas.toDataURL("image/png"));
+          dragIconCache.set(key, bytes);
+          return bytes;
+        };
         const iconClassForName = (name) => {
           const dotIndex = name.lastIndexOf(".");
           if (dotIndex < 0 || dotIndex === name.length - 1) return null;
@@ -247,9 +318,11 @@
           if (!heldPaths.length || typeof startDrag !== "function") return;
           event.preventDefault();
           try {
+            const firstPath = heldPaths[0] || "";
+            const name = firstPath.split("/").filter(Boolean).pop() || "item";
             await startDrag({
               item: heldPaths,
-              icon: DRAG_ICON_BYTES,
+              icon: makeRowDragIcon(name),
             });
           } catch (_error) {
           }

@@ -129,6 +129,7 @@
       background: rgba(30, 36, 48, 0.72);
       display: flex;
       flex-direction: column;
+      cursor: default;
     }
 
     .preview-header {
@@ -353,7 +354,14 @@
     {% endfor %}
 
     {% if preview %}
-    <aside class="preview-pane">
+    <aside
+      class="preview-pane"
+      draggable="true"
+      data-preview-path="{{ preview.path }}"
+      data-preview-name="{{ preview.title }}"
+      data-preview-icon="{{ preview.icon }}"
+      data-preview-is-dir="false"
+    >
       <div class="preview-header">
         <div class="preview-title">{{ preview.title }}</div>
         <div class="preview-subtitle">{{ preview.subtitle }}</div>
@@ -657,8 +665,7 @@
           });
         }
       };
-      // 1x1 transparent PNG for native drag icon payload.
-      const DRAG_ICON_BYTES = [137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,8,6,0,0,0,31,21,196,137,0,0,0,11,73,68,65,84,120,218,99,252,255,31,0,3,3,2,0,239,201,202,170,0,0,0,0,73,69,78,68,174,66,96,130];
+      const dragIconCache = new Map();
       const pathToFileUri = (path) => {
         if (!path) return "";
         if (path.startsWith("file://")) return path;
@@ -681,6 +688,118 @@
         if (["txt", "md", "json", "toml", "rs", "js", "ts", "html", "css"].includes(ext)) return "text/plain";
         if (["pdf"].includes(ext)) return "application/pdf";
         return "application/octet-stream";
+      };
+      const clampName = (name) => {
+        const limit = 34;
+        if (!name || name.length <= limit) return name || "item";
+        return `${name.slice(0, limit - 1)}\u2026`;
+      };
+      const pngDataUrlToBytes = (dataUrl) => {
+        const encoded = dataUrl.split(",")[1] || "";
+        const raw = atob(encoded);
+        const bytes = new Array(raw.length);
+        for (let i = 0; i < raw.length; i += 1) {
+          bytes[i] = raw.charCodeAt(i);
+        }
+        return bytes;
+      };
+      const makeRowDragIcon = (name, isDir) => {
+        const key = `${isDir ? "d" : "f"}:${name}`;
+        if (dragIconCache.has(key)) {
+          return dragIconCache.get(key);
+        }
+        const width = 260;
+        const height = 32;
+        const radius = 6;
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          return null;
+        }
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = "#1f5fbf";
+        ctx.strokeStyle = "#2f86e9";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(radius, 0);
+        ctx.lineTo(width - radius, 0);
+        ctx.quadraticCurveTo(width, 0, width, radius);
+        ctx.lineTo(width, height - radius);
+        ctx.quadraticCurveTo(width, height, width - radius, height);
+        ctx.lineTo(radius, height);
+        ctx.quadraticCurveTo(0, height, 0, height - radius);
+        ctx.lineTo(0, radius);
+        ctx.quadraticCurveTo(0, 0, radius, 0);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // Draw a small folder/file glyph so the drag image matches row semantics.
+        ctx.strokeStyle = isDir ? "#9cc8ff" : "#c7dafc";
+        ctx.fillStyle = "transparent";
+        ctx.lineWidth = 1.5;
+        if (isDir) {
+          ctx.beginPath();
+          ctx.moveTo(11, 11);
+          ctx.lineTo(16, 11);
+          ctx.lineTo(18, 9);
+          ctx.lineTo(24, 9);
+          ctx.quadraticCurveTo(25.5, 9, 25.5, 10.5);
+          ctx.lineTo(25.5, 20);
+          ctx.quadraticCurveTo(25.5, 21.5, 24, 21.5);
+          ctx.lineTo(11, 21.5);
+          ctx.quadraticCurveTo(9.5, 21.5, 9.5, 20);
+          ctx.lineTo(9.5, 12.5);
+          ctx.quadraticCurveTo(9.5, 11, 11, 11);
+          ctx.closePath();
+          ctx.stroke();
+        } else {
+          ctx.beginPath();
+          ctx.moveTo(11.5, 9.5);
+          ctx.lineTo(20, 9.5);
+          ctx.lineTo(24.5, 14);
+          ctx.lineTo(24.5, 22.5);
+          ctx.lineTo(11.5, 22.5);
+          ctx.closePath();
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(20, 9.5);
+          ctx.lineTo(20, 14);
+          ctx.lineTo(24.5, 14);
+          ctx.stroke();
+        }
+
+        ctx.fillStyle = "#f3f6ff";
+        ctx.font = '600 13px "SF Pro Text", "Segoe UI", sans-serif';
+        ctx.textBaseline = "middle";
+        ctx.fillText(clampName(name), 30, Math.round(height / 2) + 0.5);
+
+        const bytes = pngDataUrlToBytes(canvas.toDataURL("image/png"));
+        dragIconCache.set(key, bytes);
+        return bytes;
+      };
+      const startPluginDrag = (path, name, isDir, event) => {
+        const startDrag = window.__TAURI__?.drag?.startDrag;
+        if (typeof startDrag !== "function") return false;
+        event.preventDefault();
+        optionPressed = !!event.altKey;
+        const icon = makeRowDragIcon(name || "item", isDir) || [];
+        startDrag({
+          item: [path],
+          icon,
+        })
+          .then(() => {
+            logNav("plugin dragstart", {path});
+          })
+          .catch((error) => {
+            logNav("plugin dragstart failed", {path, error: String(error)});
+          })
+          .finally(() => {
+            dragInProgress = false;
+          });
+        return true;
       };
 
       let initialFromRight = null;
@@ -797,36 +916,37 @@
       });
       root.addEventListener("dragstart", (event) => {
         const row = event.target.closest(".finder-row");
-        if (!row || !event.dataTransfer) return;
+        const preview = event.target.closest(".preview-pane");
+        if (!row && !preview) return;
+        if (!event.dataTransfer) return;
         dragInProgress = true;
 
-        const path = row.dataset.path || "";
-        const name = row.dataset.name || "item";
-        const isDir = row.dataset.isDir === "true";
+        const isPreviewDrag = !!preview && !row;
+        const source = row || preview;
+        const path = source?.dataset?.path || source?.dataset?.previewPath || "";
+        const name = source?.dataset?.name || source?.dataset?.previewName || "item";
+        const isDir =
+          source?.dataset?.isDir === "true" || source?.dataset?.previewIsDir === "true";
+        if (!path) {
+          dragInProgress = false;
+          return;
+        }
         const fileUri = pathToFileUri(path);
         const mime = guessMimeType(name, isDir);
         setFocusPath(path);
-        row.focus({preventScroll: true});
-        setActiveColumn(Number(row.dataset.column || 0));
-        setRowSelectedLocally(row);
+        const matchingRow = rows.find((candidate) => candidate.dataset.path === path) || null;
+        if (matchingRow) {
+          matchingRow.focus({preventScroll: true});
+          setActiveColumn(Number(matchingRow.dataset.column || 0));
+          setRowSelectedLocally(matchingRow);
+          ensureRowVisible(matchingRow);
+          ensureColumnAndNextVisible(Number(matchingRow.dataset.column || 0));
+        } else if (isPreviewDrag) {
+          setActiveColumn(columns.length - 1);
+          ensureColumnAndNextVisible(columns.length - 1);
+        }
 
-        const startDrag = window.__TAURI__?.drag?.startDrag;
-        if (typeof startDrag === "function") {
-          event.preventDefault();
-          optionPressed = !!event.altKey;
-          startDrag({
-            item: [path],
-            icon: DRAG_ICON_BYTES,
-          })
-            .then(() => {
-              logNav("plugin dragstart", {path});
-            })
-            .catch((error) => {
-              logNav("plugin dragstart failed", {path, error: String(error)});
-            })
-            .finally(() => {
-              dragInProgress = false;
-            });
+        if (startPluginDrag(path, name, isDir, event)) {
           return;
         }
 

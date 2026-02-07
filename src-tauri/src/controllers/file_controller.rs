@@ -34,6 +34,8 @@ struct PreviewModel {
     kind: String,
     title: String,
     subtitle: String,
+    path: String,
+    icon: String,
     image_data_url: Option<String>,
     text_head: Option<String>,
     note: Option<String>,
@@ -220,6 +222,7 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
 
     let file_name = label_from_path(path);
     let subtitle = path.to_string_lossy().to_string();
+    let icon = icon_for_entry(&file_name, false).to_string();
     let ext = path
         .extension()
         .and_then(|value| value.to_str())
@@ -234,6 +237,8 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
                 kind: "image".to_string(),
                 title: file_name,
                 subtitle,
+                path: path.to_string_lossy().to_string(),
+                icon,
                 image_data_url: None,
                 text_head: None,
                 note: Some("Image is too large for inline preview.".to_string()),
@@ -246,6 +251,8 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
             kind: "image".to_string(),
             title: file_name,
             subtitle,
+            path: path.to_string_lossy().to_string(),
+            icon,
             image_data_url: Some(data_url),
             text_head: None,
             note: None,
@@ -263,6 +270,8 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
             kind: "text".to_string(),
             title: file_name,
             subtitle,
+            path: path.to_string_lossy().to_string(),
+            icon,
             image_data_url: None,
             text_head: Some(text),
             note: Some("Showing the first 16KB.".to_string()),
@@ -273,6 +282,8 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
         kind: "unknown".to_string(),
         title: file_name,
         subtitle,
+        path: path.to_string_lossy().to_string(),
+        icon,
         image_data_url: None,
         text_head: None,
         note: Some("No preview available for this file type yet.".to_string()),
