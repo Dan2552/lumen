@@ -278,22 +278,6 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
     })
 }
 
-fn selected_or_default(entries: &[FileEntry], preferred: Option<&Path>) -> String {
-    if let Some(preferred_path) = preferred {
-        let preferred_str = preferred_path.to_string_lossy().to_string();
-        if entries.iter().any(|entry| entry.path == preferred_str) {
-            return preferred_str;
-        }
-    }
-
-    entries
-        .iter()
-        .find(|entry| entry.is_dir)
-        .or_else(|| entries.first())
-        .map(|entry| entry.path.clone())
-        .unwrap_or_default()
-}
-
 fn label_from_path(path: &Path) -> String {
     path.file_name()
         .map(|value| value.to_string_lossy().to_string())
@@ -330,55 +314,36 @@ fn build_columns(home: &Path, focus_path: Option<&Path>) -> Vec<Column> {
         .filter(|path| path.starts_with(home))
         .map(|path| components_under_home(home, path))
         .unwrap_or_default();
+    let mut columns = Vec::new();
+    let mut parent_dir = home.to_path_buf();
+    let mut depth = 0usize;
 
-    let first_entries = list_directory(&home.to_path_buf());
-    let first_preferred = components.first().map(|part| home.join(part));
-    let first_selected = if focus_path.is_none() {
-        String::new()
-    } else {
-        selected_or_default(&first_entries, first_preferred.as_deref())
-    };
+    loop {
+        let entries = list_directory(&parent_dir);
+        let selected_path = if let Some(component) = components.get(depth) {
+            let candidate = parent_dir.join(component);
+            let candidate_str = candidate.to_string_lossy().to_string();
+            if entries.iter().any(|entry| entry.path == candidate_str) {
+                candidate_str
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
 
-    let second_entries = if is_directory(Path::new(&first_selected)) {
-        list_directory(&PathBuf::from(&first_selected))
-    } else {
-        Vec::new()
-    };
-    let second_preferred = components
-        .get(1)
-        .map(|part| PathBuf::from(&first_selected).join(part));
-    let second_selected = selected_or_default(&second_entries, second_preferred.as_deref());
-
-    let third_entries = if is_directory(Path::new(&second_selected)) {
-        list_directory(&PathBuf::from(&second_selected))
-    } else {
-        Vec::new()
-    };
-    let third_preferred = components
-        .get(2)
-        .map(|part| PathBuf::from(&second_selected).join(part));
-    let third_selected = selected_or_default(&third_entries, third_preferred.as_deref());
-
-    let mut columns = vec![Column {
-        title: label_from_path(home),
-        entries: first_entries,
-        selected_path: first_selected.clone(),
-    }];
-
-    if !first_selected.is_empty() {
         columns.push(Column {
-            title: label_from_path(Path::new(&first_selected)),
-            entries: second_entries,
-            selected_path: second_selected.clone(),
+            title: label_from_path(&parent_dir),
+            entries,
+            selected_path: selected_path.clone(),
         });
-    }
 
-    if !second_selected.is_empty() && is_directory(Path::new(&second_selected)) {
-        columns.push(Column {
-            title: label_from_path(Path::new(&second_selected)),
-            entries: third_entries,
-            selected_path: third_selected,
-        });
+        if selected_path.is_empty() || !is_directory(Path::new(&selected_path)) {
+            break;
+        }
+
+        parent_dir = PathBuf::from(selected_path);
+        depth += 1;
     }
 
     columns

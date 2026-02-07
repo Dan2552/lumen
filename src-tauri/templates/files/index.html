@@ -341,15 +341,28 @@
       const root = document.getElementById("main-root");
       if (!root) return;
       const activeTabId = root.dataset.activeTabId || "default";
+      const DEBUG_NAV = true;
+      const logNav = (...args) => {
+        if (!DEBUG_NAV) return;
+        console.debug("[files-nav]", ...args);
+      };
       window.__filesFocusPathByTab = window.__filesFocusPathByTab || {};
       const getFocusPath = () => window.__filesFocusPathByTab[activeTabId] || null;
       const setFocusPath = (path) => {
+        logNav("setFocusPath", {activeTabId, path});
         window.__filesFocusPathByTab[activeTabId] = path;
       };
 
       const rows = Array.from(root.querySelectorAll(".finder-row"));
       if (rows.length === 0) return;
       const columns = Array.from(root.querySelectorAll(".finder-column"));
+      logNav("init", {
+        activeTabId,
+        rows: rows.length,
+        columns: columns.length,
+        rememberedFocus: getFocusPath(),
+        pendingRightFromPath: window.__filesPendingRightFromPath || null,
+      });
 
       const selectedRows = rows.filter((row) => row.classList.contains("is-selected"));
       const rowsByColumn = new Map();
@@ -370,16 +383,38 @@
           column.classList.toggle("is-active", Number(column.dataset.column) === columnIndex);
         }
       };
+      const setRowSelectedLocally = (row) => {
+        const columnIndex = Number(row.dataset.column || 0);
+        const columnRows = rowsByColumn.get(columnIndex) || [];
+        for (const candidate of columnRows) {
+          candidate.classList.remove("is-selected");
+        }
+        row.classList.add("is-selected");
+      };
 
       let initialFromRight = null;
+      let shouldCommitInitialFromRight = false;
       if (window.__filesPendingRightFromPath) {
         const anchor = rows.find(
           (row) =>
             row.dataset.path === window.__filesPendingRightFromPath && row.classList.contains("is-selected"),
         );
+        logNav("pendingRight anchor", {
+          pending: window.__filesPendingRightFromPath,
+          found: !!anchor,
+          anchorColumn: anchor ? Number(anchor.dataset.column || 0) : null,
+        });
         if (anchor) {
           const nextColumn = Number(anchor.dataset.column || 0) + 1;
           initialFromRight = selectedInColumn(nextColumn) || (rowsByColumn.get(nextColumn) || [])[0] || null;
+          if (initialFromRight && !initialFromRight.classList.contains("is-selected")) {
+            shouldCommitInitialFromRight = true;
+          }
+          logNav("pendingRight resolved", {
+            nextColumn,
+            initialFromRightPath: initialFromRight?.dataset?.path || null,
+            shouldCommitInitialFromRight,
+          });
         }
         window.__filesPendingRightFromPath = null;
       }
@@ -392,9 +427,32 @@
       const initialRow = initialFromRight || focusedRow || rememberedRow || rightmostSelected() || null;
 
       if (initialRow) {
+        logNav("initialRow", {
+          path: initialRow.dataset.path,
+          column: Number(initialRow.dataset.column || 0),
+          shouldCommitInitialFromRight,
+        });
         setFocusPath(initialRow.dataset.path);
         initialRow.focus({preventScroll: true});
         setActiveColumn(Number(initialRow.dataset.column || 0));
+        if (shouldCommitInitialFromRight) {
+          setRowSelectedLocally(initialRow);
+          setTimeout(() => {
+            if (document.body.contains(initialRow)) {
+              const path = initialRow.dataset.path;
+              logNav("auto-commit navigate", {path, column: initialRow.dataset.column});
+              if (window.htmx?.ajax) {
+                window.htmx.ajax("GET", "command/navigate", {
+                  target: "#main-root",
+                  swap: "outerHTML",
+                  values: {path},
+                });
+              } else {
+                initialRow.click();
+              }
+            }
+          }, 0);
+        }
       }
 
       const pendingContextMenu = window.__filesPendingContextMenu;
@@ -409,6 +467,7 @@
       root.addEventListener("click", (event) => {
         const row = event.target.closest(".finder-row");
         if (!row) return;
+        logNav("row click", {path: row.dataset.path, column: row.dataset.column, isDir: row.dataset.isDir});
         setFocusPath(row.dataset.path);
         setActiveColumn(Number(row.dataset.column || 0));
       });
@@ -418,6 +477,7 @@
         if (!row) return;
 
         event.preventDefault();
+        logNav("contextmenu", {path: row.dataset.path, column: row.dataset.column});
         window.__filesPendingContextMenu = {
           path: row.dataset.path,
           x: event.clientX,
@@ -447,6 +507,12 @@
           rows.find((row) => row.dataset.path === getFocusPath()) ||
           rightmostSelected() ||
           null;
+        logNav("keydown", {
+          key: event.key,
+          currentPath: current?.dataset?.path || null,
+          currentColumn: current ? Number(current.dataset.column || 0) : null,
+          currentIsDir: current?.dataset?.isDir || null,
+        });
         if (!current) {
           if (event.key === "ArrowDown") {
             const firstColumnRow = (rowsByColumn.get(0) || [])[0] || null;
@@ -479,6 +545,11 @@
             null;
         } else if (event.key === "ArrowRight") {
           if (current.dataset.isDir === "true") {
+            logNav("ArrowRight on dir", {
+              path: current.dataset.path,
+              column: current.dataset.column,
+              action: "set pending right and click current",
+            });
             event.preventDefault();
             window.__filesPendingRightFromPath = current.dataset.path;
             setFocusPath(current.dataset.path);
@@ -511,6 +582,7 @@
         },
         {once: true},
       );
+
     })();
   </script>
 </div>
