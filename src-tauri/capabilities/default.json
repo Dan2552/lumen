@@ -10,6 +10,7 @@
     "opener:default",
     "dialog:allow-confirm",
     "dialog:allow-message",
-    "clipboard-manager:default"
+    "clipboard-manager:default",
+    "drag:default"
   ]
 }

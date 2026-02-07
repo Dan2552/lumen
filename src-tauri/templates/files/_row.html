@@ -1,7 +1,9 @@
 <button
   class="finder-row {% if entry.path == selected_path %}is-selected{% endif %}"
   type="button"
+  draggable="true"
   data-path="{{ entry.path }}"
+  data-name="{{ entry.name }}"
   data-column="{{ column_index }}"
   data-is-dir="{{ entry.is_dir }}"
   hx-get="command/navigate"

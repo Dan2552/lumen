@@ -24,6 +24,7 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_drag::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| match event {

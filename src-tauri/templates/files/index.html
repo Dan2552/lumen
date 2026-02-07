@@ -362,6 +362,7 @@
 
       const rows = Array.from(root.querySelectorAll(".finder-row"));
       if (rows.length === 0) return;
+      let dragInProgress = false;
       const columns = Array.from(root.querySelectorAll(".finder-column"));
       const layout = root.querySelector(".finder-layout");
       const previewPane = layout?.querySelector(".preview-pane") || null;
@@ -508,6 +509,31 @@
         }
         row.classList.add("is-selected");
       };
+      // 1x1 transparent PNG for native drag icon payload.
+      const DRAG_ICON_BYTES = [137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,8,6,0,0,0,31,21,196,137,0,0,0,11,73,68,65,84,120,218,99,252,255,31,0,3,3,2,0,239,201,202,170,0,0,0,0,73,69,78,68,174,66,96,130];
+      const pathToFileUri = (path) => {
+        if (!path) return "";
+        if (path.startsWith("file://")) return path;
+        const normalized = path.replace(/\\/g, "/");
+        const encoded = normalized
+          .split("/")
+          .map((segment, index) => (index === 0 ? segment : encodeURIComponent(segment)))
+          .join("/");
+        if (encoded.startsWith("/")) return `file://${encoded}`;
+        return `file:///${encoded}`;
+      };
+      const guessMimeType = (name, isDir) => {
+        if (isDir) return "inode/directory";
+        const ext = (name.split(".").pop() || "").toLowerCase();
+        if (["png"].includes(ext)) return "image/png";
+        if (["jpg", "jpeg"].includes(ext)) return "image/jpeg";
+        if (["gif"].includes(ext)) return "image/gif";
+        if (["webp"].includes(ext)) return "image/webp";
+        if (["svg"].includes(ext)) return "image/svg+xml";
+        if (["txt", "md", "json", "toml", "rs", "js", "ts", "html", "css"].includes(ext)) return "text/plain";
+        if (["pdf"].includes(ext)) return "application/pdf";
+        return "application/octet-stream";
+      };
 
       let initialFromRight = null;
       let shouldCommitInitialFromRight = false;
@@ -588,6 +614,7 @@
       root.addEventListener("click", (event) => {
         const row = event.target.closest(".finder-row");
         if (!row) return;
+        if (dragInProgress) return;
         logNav("row click", {path: row.dataset.path, column: row.dataset.column, isDir: row.dataset.isDir});
         setFocusPath(row.dataset.path);
         row.focus({preventScroll: true});
@@ -600,7 +627,11 @@
       root.addEventListener("mousedown", (event) => {
         const row = event.target.closest(".finder-row");
         if (!row) return;
-        event.preventDefault();
+        // Right-click is handled via context menu path; keep default for left button
+        // so native dragging can start.
+        if (event.button === 2) {
+          event.preventDefault();
+        }
       });
 
       root.addEventListener("contextmenu", (event) => {
@@ -615,6 +646,51 @@
           y: event.clientY,
         };
         row.click();
+      });
+      root.addEventListener("dragstart", (event) => {
+        const row = event.target.closest(".finder-row");
+        if (!row || !event.dataTransfer) return;
+        dragInProgress = true;
+
+        const path = row.dataset.path || "";
+        const name = row.dataset.name || "item";
+        const isDir = row.dataset.isDir === "true";
+        const fileUri = pathToFileUri(path);
+        const mime = guessMimeType(name, isDir);
+        setFocusPath(path);
+        row.focus({preventScroll: true});
+        setActiveColumn(Number(row.dataset.column || 0));
+        setRowSelectedLocally(row);
+
+        const startDrag = window.__TAURI__?.drag?.startDrag;
+        if (typeof startDrag === "function") {
+          event.preventDefault();
+          startDrag({
+            item: [path],
+            icon: DRAG_ICON_BYTES,
+          })
+            .then(() => {
+              logNav("plugin dragstart", {path});
+            })
+            .catch((error) => {
+              logNav("plugin dragstart failed", {path, error: String(error)});
+            })
+            .finally(() => {
+              dragInProgress = false;
+            });
+          return;
+        }
+
+        event.dataTransfer.effectAllowed = "copy";
+        event.dataTransfer.setData("text/plain", path);
+        event.dataTransfer.setData("text/uri-list", `${fileUri}\r\n`);
+        event.dataTransfer.setData("DownloadURL", `${mime}:${name}:${fileUri}`);
+        logNav("dragstart", {path, fileUri, mime});
+      });
+      root.addEventListener("dragend", () => {
+        setTimeout(() => {
+          dragInProgress = false;
+        }, 0);
       });
 
       root.addEventListener("focusin", (event) => {
