@@ -971,14 +971,24 @@
         window.__filesPendingContextMenu = null;
         const invoke = window.__TAURI__?.core?.invoke;
         if (typeof invoke === "function") {
-          invoke("show_file_context_menu", pendingContextMenu).catch(() => {});
+          invoke("show_file_context_menu", {
+            path: pendingContextMenu.path,
+            isDir: !!pendingContextMenu.isDir,
+            x: pendingContextMenu.x,
+            y: pendingContextMenu.y,
+          }).catch(() => {});
         }
       }
 
       const showContextMenu = (payload) => {
         const invoke = window.__TAURI__?.core?.invoke;
         if (typeof invoke !== "function") return;
-        invoke("show_file_context_menu", payload).catch(() => {});
+        invoke("show_file_context_menu", {
+          path: payload.path,
+          isDir: !!payload.isDir,
+          x: payload.x,
+          y: payload.y,
+        }).catch(() => {});
       };
       const htmxCommandSwap = (command, values) =>
         window.htmx?.ajax?.("GET", `command/${command}`, {
@@ -998,6 +1008,31 @@
             const name = path.split("/").filter(Boolean).at(-1) || path;
 
             const normalized = String(action).toLowerCase();
+            if (normalized.includes("open_zed")) {
+              logNav("context open zed", {path});
+              const invoke = window.__TAURI__?.core?.invoke;
+              if (typeof invoke === "function") {
+                invoke("open_in_zed", {path}).catch((error) => {
+                  logNav("open_in_zed failed", {path, error: String(error)});
+                });
+              }
+              return;
+            }
+            if (normalized.includes("open_warp")) {
+              logNav("context open warp", {path});
+              const invoke = window.__TAURI__?.core?.invoke;
+              if (typeof invoke === "function") {
+                invoke("open_in_warp", {path}).catch((error) => {
+                  logNav("open_in_warp failed", {path, error: String(error)});
+                });
+              }
+              return;
+            }
+            if (normalized.includes("set_tab_root")) {
+              logNav("context set tab root", {path});
+              htmxCommandSwap("set_tab_root", {path});
+              return;
+            }
             if (normalized.includes("rename")) {
               const result = await openFilesModal({
                 title: "Rename",
@@ -1011,6 +1046,36 @@
               if (!trimmed || trimmed === name) return;
               logNav("context rename submit", {path, newName: trimmed});
               htmxCommandSwap("rename_path", {path, newName: trimmed});
+              return;
+            }
+            if (normalized.includes("new_dir")) {
+              const result = await openFilesModal({
+                title: "Create Directory",
+                message: "Directory name:",
+                confirmLabel: "Create",
+                kind: "prompt",
+                initialValue: "New Folder",
+              });
+              if (!result.confirmed) return;
+              const trimmed = String(result.value || "").trim();
+              if (!trimmed) return;
+              logNav("context create dir", {path, name: trimmed});
+              htmxCommandSwap("create_directory", {parentPath: path, name: trimmed});
+              return;
+            }
+            if (normalized.includes("new_file")) {
+              const result = await openFilesModal({
+                title: "Create File",
+                message: "File name (empty text file):",
+                confirmLabel: "Create",
+                kind: "prompt",
+                initialValue: "untitled.txt",
+              });
+              if (!result.confirmed) return;
+              const trimmed = String(result.value || "").trim();
+              if (!trimmed) return;
+              logNav("context create file", {path, name: trimmed});
+              htmxCommandSwap("create_file", {parentPath: path, name: trimmed});
               return;
             }
 
@@ -1144,6 +1209,7 @@
           logNav("contextmenu", {path: row.dataset.path, column: row.dataset.column});
           window.__filesPendingContextMenu = {
             path: row.dataset.path,
+            isDir: row.dataset.isDir === "true",
             x: event.clientX,
             y: event.clientY,
           };
@@ -1159,6 +1225,26 @@
         logNav("contextmenu header", {path});
         showContextMenu({
           path,
+          isDir: true,
+          x: event.clientX,
+          y: event.clientY,
+        });
+        return;
+      });
+
+      root.addEventListener("contextmenu", (event) => {
+        const row = event.target.closest(".finder-row");
+        const header = event.target.closest(".column-header");
+        if (row || header) return;
+        const column = event.target.closest(".finder-column");
+        if (!column) return;
+        const path = column.dataset.path || "";
+        if (!path) return;
+        event.preventDefault();
+        logNav("contextmenu column", {path, column: column.dataset.column});
+        showContextMenu({
+          path,
+          isDir: true,
           x: event.clientX,
           y: event.clientY,
         });

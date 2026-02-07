@@ -4,6 +4,7 @@ use std::{
     io::{ErrorKind, Write},
     io::Read,
     path::{Path, PathBuf},
+    process::Command,
     sync::Mutex,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -52,6 +53,9 @@ struct TabView {
 #[derive(serde::Serialize, serde::Deserialize)]
 struct TabState {
     id: u64,
+    #[serde(default)]
+    root_path: Option<String>,
+    #[serde(default)]
     focus_path: Option<String>,
 }
 
@@ -610,11 +614,42 @@ fn normalize_tab_path(home: &Path, input: Option<&str>) -> PathBuf {
     }
 }
 
+fn active_tab_root_path(tab: &TabState, home: &Path) -> PathBuf {
+    tab.root_path
+        .as_deref()
+        .map(PathBuf::from)
+        .filter(|path| path.starts_with(home) && path.is_dir())
+        .unwrap_or_else(|| home.to_path_buf())
+}
+
+fn relative_path_from_root(path: &Path, root: &Path) -> String {
+    path.strip_prefix(root)
+        .ok()
+        .map(|relative| {
+            let value = relative.to_string_lossy().to_string();
+            if value.is_empty() { ".".to_string() } else { value }
+        })
+        .unwrap_or_else(|| path.to_string_lossy().to_string())
+}
+
 fn ensure_tabs(model: &mut TabsModel, home: &Path) {
     for tab in &mut model.tabs {
+        if let Some(root) = tab.root_path.clone() {
+            let normalized = normalize_tab_path(home, Some(&root));
+            if normalized == home {
+                tab.root_path = None;
+            } else {
+                tab.root_path = Some(normalized.to_string_lossy().to_string());
+            }
+        }
+        let tab_root = active_tab_root_path(tab, home);
         if let Some(path) = tab.focus_path.clone() {
             let normalized = normalize_tab_path(home, Some(&path));
-            tab.focus_path = Some(normalized.to_string_lossy().to_string());
+            if normalized.starts_with(&tab_root) {
+                tab.focus_path = Some(normalized.to_string_lossy().to_string());
+            } else {
+                tab.focus_path = None;
+            }
         }
     }
 
@@ -630,6 +665,7 @@ fn ensure_tabs(model: &mut TabsModel, home: &Path) {
     if model.tabs.is_empty() {
         model.tabs.push(TabState {
             id: 1,
+            root_path: None,
             focus_path: None,
         });
         model.active_id = 1;
@@ -695,15 +731,19 @@ fn render_view(model: &TabsModel) -> String {
         .iter()
         .find(|tab| tab.id == model.active_id)
         .or_else(|| model.tabs.first());
+    let active_root_path = active_tab
+        .map(|tab| active_tab_root_path(tab, &home))
+        .unwrap_or_else(|| home.clone());
     let active_focus_path = active_tab
         .and_then(|tab| tab.focus_path.clone())
-        .map(PathBuf::from);
-    let columns = build_columns(&home, active_focus_path.as_deref());
+        .map(PathBuf::from)
+        .filter(|path| path.starts_with(&active_root_path));
+    let columns = build_columns(&active_root_path, active_focus_path.as_deref());
     let preview = build_preview(active_focus_path.as_deref());
     let active_path_for_new = active_focus_path
         .as_ref()
         .map(|path| path.to_string_lossy().to_string())
-        .unwrap_or_else(|| home.to_string_lossy().to_string());
+        .unwrap_or_else(|| active_root_path.to_string_lossy().to_string());
     let tabs: Vec<TabView> = model
         .tabs
         .iter()
@@ -719,8 +759,8 @@ fn render_view(model: &TabsModel) -> String {
         })
         .collect();
 
-    context.insert("root_name", &label_from_path(&home));
-    context.insert("root_path", &home.to_string_lossy().to_string());
+    context.insert("root_name", &label_from_path(&active_root_path));
+    context.insert("root_path", &active_root_path.to_string_lossy().to_string());
     context.insert("columns", &columns);
     context.insert("tabs", &tabs);
     context.insert("active_path", &active_path_for_new);
@@ -732,13 +772,19 @@ fn render_view(model: &TabsModel) -> String {
 }
 
 pub struct FileContextMenuState {
-    pub pending_path: Mutex<Option<String>>,
+    pub pending: Mutex<Option<PendingContextTarget>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingContextTarget {
+    pub path: String,
+    pub relative_path: String,
 }
 
 impl Default for FileContextMenuState {
     fn default() -> Self {
         Self {
-            pending_path: Mutex::new(None),
+            pending: Mutex::new(None),
         }
     }
 }
@@ -766,7 +812,10 @@ pub fn navigate(state: State<'_, FileTabsState>, path: String) -> String {
 
     let normalized = normalize_tab_path(&home, Some(&path));
     if let Some(tab) = active_tab_mut(&mut model) {
-        tab.focus_path = Some(normalized.to_string_lossy().to_string());
+        let root = active_tab_root_path(tab, &home);
+        if normalized.starts_with(&root) {
+            tab.focus_path = Some(normalized.to_string_lossy().to_string());
+        }
     }
 
     persist_tabs_model(&model);
@@ -805,6 +854,7 @@ pub fn new_tab(state: State<'_, FileTabsState>, _path: String) -> String {
     model.next_id += 1;
     model.tabs.push(TabState {
         id,
+        root_path: None,
         focus_path: None,
     });
     model.active_id = id;
@@ -831,6 +881,7 @@ pub fn close_tab(state: State<'_, FileTabsState>, tab_id: String) -> String {
     };
 
     if model.tabs.len() == 1 {
+        model.tabs[0].root_path = None;
         model.tabs[0].focus_path = None;
         model.active_id = model.tabs[0].id;
         persist_tabs_model(&model);
@@ -873,7 +924,10 @@ pub fn drop_files_into_directory(
     perform_drop_operation(&home, &target, &source_paths, &op)?;
 
     if let Some(tab) = active_tab_mut(&mut model) {
-        tab.focus_path = Some(target.to_string_lossy().to_string());
+        let root = active_tab_root_path(tab, &home);
+        if target.starts_with(&root) {
+            tab.focus_path = Some(target.to_string_lossy().to_string());
+        }
     }
     persist_tabs_model(&model);
     Ok(render_view(&model))
@@ -883,19 +937,57 @@ pub fn drop_files_into_directory(
 pub fn show_file_context_menu(
     window: Window,
     state: State<'_, FileContextMenuState>,
+    tabs_state: State<'_, FileTabsState>,
     path: String,
+    is_dir: bool,
     x: f64,
     y: f64,
 ) -> Result<(), String> {
+    let home = home_directory();
+    let mut model = tabs_state
+        .tabs
+        .lock()
+        .map_err(|_| "failed to lock tabs state".to_string())?;
+    ensure_tabs(&mut model, &home);
+    let active_tab = model
+        .tabs
+        .iter()
+        .find(|tab| tab.id == model.active_id)
+        .or_else(|| model.tabs.first())
+        .ok_or_else(|| "missing active tab".to_string())?;
+    let root = active_tab_root_path(active_tab, &home);
+    drop(model);
+
+    let path_buf = PathBuf::from(&path);
+    let relative_path = relative_path_from_root(&path_buf, &root);
+
     let mut pending = state
-        .pending_path
+        .pending
         .lock()
         .map_err(|_| "failed to lock context menu state".to_string())?;
-    *pending = Some(path);
+    *pending = Some(PendingContextTarget {
+        path,
+        relative_path,
+    });
     drop(pending);
 
-    let menu = MenuBuilder::new(&window)
-        .text("copy_path", "Copy path")
+    let mut builder = MenuBuilder::new(&window);
+    if is_dir {
+        builder = builder
+            .text("ctx_new_dir", "Create directory")
+            .text("ctx_new_file", "Create file")
+            .separator()
+            .text("ctx_set_tab_root", "Set as current tab root")
+            .separator()
+            .text("ctx_open_warp", "Open in Warp")
+            .text("ctx_open_zed", "Open in Zed")
+            .separator();
+    } else {
+        builder = builder.text("ctx_open_zed", "Open in Zed").separator();
+    }
+    let menu = builder
+        .text("copy_absolute_path", "Copy absolute path")
+        .text("copy_relative_path", "Copy relative path")
         .separator()
         .text("ctx_rename", "Rename")
         .text("ctx_trash", "Trash")
@@ -984,6 +1076,125 @@ pub fn delete_path(state: State<'_, FileTabsState>, path: String) -> Result<Stri
     }
     remove_permanently(&source)?;
     set_active_focus_after_path_change(&mut model, &home, None, &source);
+    persist_tabs_model(&model);
+    Ok(render_view(&model))
+}
+
+#[tauri::command]
+pub fn create_directory(
+    state: State<'_, FileTabsState>,
+    parent_path: String,
+    name: String,
+) -> Result<String, String> {
+    let home = home_directory();
+    let mut model = state
+        .tabs
+        .lock()
+        .map_err(|_| "failed to lock tabs state".to_string())?;
+    ensure_tabs(&mut model, &home);
+
+    let parent = resolve_home_scoped_path(&home, &parent_path)?;
+    if !parent.is_dir() {
+        return Err("parent path is not a directory".to_string());
+    }
+    let clean_name = validate_rename_name(&name)?;
+    let target = parent.join(clean_name);
+    if target.exists() {
+        return Err("destination already exists".to_string());
+    }
+    fs::create_dir(&target).map_err(|error| error.to_string())?;
+    set_active_focus_after_path_change(&mut model, &home, Some(&target), &parent);
+    persist_tabs_model(&model);
+    Ok(render_view(&model))
+}
+
+#[tauri::command]
+pub fn create_file(
+    state: State<'_, FileTabsState>,
+    parent_path: String,
+    name: String,
+) -> Result<String, String> {
+    let home = home_directory();
+    let mut model = state
+        .tabs
+        .lock()
+        .map_err(|_| "failed to lock tabs state".to_string())?;
+    ensure_tabs(&mut model, &home);
+
+    let parent = resolve_home_scoped_path(&home, &parent_path)?;
+    if !parent.is_dir() {
+        return Err("parent path is not a directory".to_string());
+    }
+    let mut clean_name = validate_rename_name(&name)?;
+    if !clean_name.to_ascii_lowercase().ends_with(".txt") {
+        clean_name.push_str(".txt");
+    }
+    let target = parent.join(clean_name);
+    if target.exists() {
+        return Err("destination already exists".to_string());
+    }
+    fs::File::create(&target).map_err(|error| error.to_string())?;
+    set_active_focus_after_path_change(&mut model, &home, Some(&target), &parent);
+    persist_tabs_model(&model);
+    Ok(render_view(&model))
+}
+
+fn open_path_with_application(app_name: &str, path: &Path) -> Result<(), String> {
+    let status = Command::new("open")
+        .arg("-a")
+        .arg(app_name)
+        .arg(path)
+        .status()
+        .map_err(|error| error.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("failed to launch {app_name}"))
+    }
+}
+
+#[tauri::command]
+pub fn open_in_zed(path: String) -> Result<(), String> {
+    let home = home_directory();
+    let target = resolve_home_scoped_path(&home, &path)?;
+    open_path_with_application("Zed", &target)
+}
+
+#[tauri::command]
+pub fn open_in_warp(path: String) -> Result<(), String> {
+    let home = home_directory();
+    let target = resolve_home_scoped_path(&home, &path)?;
+    if !target.is_dir() {
+        return Err("warp can only open directories".to_string());
+    }
+    open_path_with_application("Warp", &target)
+}
+
+#[tauri::command]
+pub fn set_tab_root(state: State<'_, FileTabsState>, path: String) -> Result<String, String> {
+    let home = home_directory();
+    let mut model = state
+        .tabs
+        .lock()
+        .map_err(|_| "failed to lock tabs state".to_string())?;
+    ensure_tabs(&mut model, &home);
+
+    let target = resolve_home_scoped_path(&home, &path)?;
+    if !target.is_dir() {
+        return Err("tab root must be a directory".to_string());
+    }
+    if let Some(tab) = active_tab_mut(&mut model) {
+        if target == home {
+            tab.root_path = None;
+        } else {
+            tab.root_path = Some(target.to_string_lossy().to_string());
+        }
+        if let Some(focus) = tab.focus_path.clone().map(PathBuf::from) {
+            if !focus.starts_with(&target) {
+                tab.focus_path = None;
+            }
+        }
+    }
     persist_tabs_model(&model);
     Ok(render_view(&model))
 }

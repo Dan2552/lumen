@@ -197,23 +197,42 @@ pub fn run() {
         .on_menu_event(|app, event| {
             let path_to_copy = {
                 let state = app.state::<file_controller::FileContextMenuState>();
-                state.pending_path.lock().ok().and_then(|pending| pending.clone())
+                state.pending.lock().ok().and_then(|pending| pending.clone())
             };
-            let Some(path) = path_to_copy else {
+            let Some(pending) = path_to_copy else {
                 return;
             };
+            let path = pending.path;
+            let relative_path = pending.relative_path;
 
             let menu_id = event.id().as_ref();
-            if menu_id == "copy_path" {
+            if menu_id == "copy_absolute_path" {
                 let _ = app.clipboard().write_text(path);
                 return;
             }
+            if menu_id == "copy_relative_path" {
+                let _ = app.clipboard().write_text(relative_path);
+                return;
+            }
 
-            if menu_id == "ctx_rename" || menu_id == "ctx_trash" || menu_id == "ctx_delete" {
+            if menu_id == "ctx_rename"
+                || menu_id == "ctx_trash"
+                || menu_id == "ctx_delete"
+                || menu_id == "ctx_new_dir"
+                || menu_id == "ctx_new_file"
+                || menu_id == "ctx_set_tab_root"
+                || menu_id == "ctx_open_zed"
+                || menu_id == "ctx_open_warp"
+            {
                 let action = match menu_id {
                     "ctx_rename" => "rename",
                     "ctx_trash" => "trash",
                     "ctx_delete" => "delete",
+                    "ctx_new_dir" => "new_dir",
+                    "ctx_new_file" => "new_file",
+                    "ctx_set_tab_root" => "set_tab_root",
+                    "ctx_open_zed" => "open_zed",
+                    "ctx_open_warp" => "open_warp",
                     _ => return,
                 };
                 let _ = app.emit(
@@ -243,6 +262,11 @@ pub fn run() {
             file_controller::rename_path,
             file_controller::trash_path,
             file_controller::delete_path,
+            file_controller::create_directory,
+            file_controller::create_file,
+            file_controller::set_tab_root,
+            file_controller::open_in_zed,
+            file_controller::open_in_warp,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
