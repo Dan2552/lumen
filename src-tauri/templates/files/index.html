@@ -117,6 +117,11 @@
       flex-direction: column;
     }
 
+    .finder-column.is-drop-target {
+      background: rgba(48, 74, 120, 0.4);
+      box-shadow: inset 0 0 0 1px rgba(118, 167, 255, 0.6);
+    }
+
     .preview-pane {
       width: 360px;
       min-width: 300px;
@@ -279,6 +284,35 @@
     .finder-column.is-active .finder-row.is-selected .row-disclosure {
       color: #dce9ff;
     }
+
+    .drop-hint {
+      position: fixed;
+      z-index: 1000;
+      min-width: 220px;
+      border: 1px solid #4a556f;
+      border-radius: 8px;
+      padding: 8px 10px;
+      background: rgba(24, 30, 41, 0.98);
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+      color: #d9e2f4;
+      font-size: 12px;
+      pointer-events: none;
+    }
+
+    .drop-hint-title {
+      color: #e4ecff;
+      font-weight: 600;
+    }
+
+    .drop-hint-subtitle {
+      margin-top: 2px;
+      color: #9fb0cf;
+      font-size: 11px;
+    }
+
+    .drop-hint[hidden] {
+      display: none;
+    }
   </style>
 
   <div class="tabs-bar">
@@ -337,6 +371,10 @@
     </aside>
     {% endif %}
   </div>
+  <div id="drop-hint" class="drop-hint" hidden>
+    <div class="drop-hint-title" id="drop-hint-title"></div>
+    <div class="drop-hint-subtitle" id="drop-hint-subtitle"></div>
+  </div>
 
   <script>
     (() => {
@@ -366,6 +404,14 @@
       const columns = Array.from(root.querySelectorAll(".finder-column"));
       const layout = root.querySelector(".finder-layout");
       const previewPane = layout?.querySelector(".preview-pane") || null;
+      const dropHint = root.querySelector("#drop-hint");
+      const dropHintTitle = root.querySelector("#drop-hint-title");
+      const dropHintSubtitle = root.querySelector("#drop-hint-subtitle");
+      let dropTargetColumn = null;
+      let externalDragPaths = [];
+      let externalDragPoint = null;
+      let dragDropUnlisten = null;
+      let optionPressed = false;
       window.__filesScrollStateByTab = window.__filesScrollStateByTab || {};
       const getScrollState = () => window.__filesScrollStateByTab[activeTabId] || null;
       const saveScrollState = () => {
@@ -508,6 +554,108 @@
           candidate.classList.remove("is-selected");
         }
         row.classList.add("is-selected");
+      };
+      const clearDropTarget = () => {
+        if (!dropTargetColumn) return;
+        dropTargetColumn.classList.remove("is-drop-target");
+        dropTargetColumn = null;
+      };
+      const getDropOperation = () => (optionPressed ? "move" : "copy");
+      const hideDropHint = () => {
+        externalDragPoint = null;
+        if (dropHint) {
+          dropHint.hidden = true;
+        }
+      };
+      const getClientPointFromDrop = (position) => {
+        return {
+          x: Number(position?.x || 0),
+          y: Number(position?.y || 0),
+        };
+      };
+      const findColumnAtPoint = (clientX, clientY) => {
+        for (const column of columns) {
+          const rect = column.getBoundingClientRect();
+          if (
+            clientX >= rect.left &&
+            clientX <= rect.right &&
+            clientY >= rect.top &&
+            clientY <= rect.bottom
+          ) {
+            return column;
+          }
+        }
+        return null;
+      };
+      const setDropTargetByPoint = (clientX, clientY) => {
+        const column = findColumnAtPoint(clientX, clientY);
+        if (!column || !column.dataset.path) {
+          clearDropTarget();
+          return null;
+        }
+        if (dropTargetColumn !== column) {
+          clearDropTarget();
+          dropTargetColumn = column;
+          dropTargetColumn.classList.add("is-drop-target");
+        }
+        return column;
+      };
+      const updateDropHint = (clientX, clientY, targetDir) => {
+        if (!dropHint || !dropHintTitle || !dropHintSubtitle) return;
+        dropHint.hidden = false;
+        const margin = 10;
+        const hintWidth = dropHint.offsetWidth || 260;
+        const hintHeight = dropHint.offsetHeight || 56;
+        const maxX = window.innerWidth - hintWidth - margin;
+        const maxY = window.innerHeight - hintHeight - margin;
+        const left = Math.max(margin, Math.min(maxX, clientX + 8));
+        const top = Math.max(margin, Math.min(maxY, clientY + 8));
+        dropHint.style.left = `${left}px`;
+        dropHint.style.top = `${top}px`;
+
+        const operation = getDropOperation();
+        const count = externalDragPaths.length;
+        const destination = targetDir.split("/").filter(Boolean).at(-1) || targetDir;
+        const verb = operation === "move" ? "Move" : "Copy";
+        const noun = count === 1 ? "item" : "items";
+        dropHintTitle.textContent = `Drop here to ${verb.toLowerCase()} ${count} ${noun} to ${destination}`;
+        dropHintSubtitle.textContent =
+          operation === "copy" ? "Hold Option to move instead" : "Release Option to copy instead";
+      };
+      const refreshAfterDrop = (targetDir) => {
+        if (window.htmx?.ajax) {
+          window.htmx.ajax("GET", "command/navigate", {
+            target: "#main-root",
+            swap: "outerHTML",
+            values: {path: targetDir},
+          });
+        }
+      };
+      const commitExternalDrop = async (targetDir, operation) => {
+        if (!targetDir || externalDragPaths.length === 0) return;
+        const invoke = window.__TAURI__?.core?.invoke;
+        if (typeof invoke !== "function") return;
+        hideDropHint();
+        clearDropTarget();
+        try {
+          await invoke("drop_files_into_directory", {
+            targetDir,
+            sourcePaths: externalDragPaths,
+            operation,
+          });
+          logNav("drop_files_into_directory success", {
+            targetDir,
+            operation,
+            count: externalDragPaths.length,
+          });
+          refreshAfterDrop(targetDir);
+        } catch (error) {
+          logNav("drop_files_into_directory failed", {
+            targetDir,
+            operation,
+            error: String(error),
+          });
+        }
       };
       // 1x1 transparent PNG for native drag icon payload.
       const DRAG_ICON_BYTES = [137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,8,6,0,0,0,31,21,196,137,0,0,0,11,73,68,65,84,120,218,99,252,255,31,0,3,3,2,0,239,201,202,170,0,0,0,0,73,69,78,68,174,66,96,130];
@@ -692,6 +840,20 @@
           dragInProgress = false;
         }, 0);
       });
+      document.addEventListener("keydown", (event) => {
+        if (event.key !== "Alt") return;
+        optionPressed = true;
+        if (dropTargetColumn && externalDragPoint) {
+          updateDropHint(externalDragPoint.x, externalDragPoint.y, dropTargetColumn.dataset.path || "");
+        }
+      });
+      document.addEventListener("keyup", (event) => {
+        if (event.key !== "Alt") return;
+        optionPressed = false;
+        if (dropTargetColumn && externalDragPoint) {
+          updateDropHint(externalDragPoint.x, externalDragPoint.y, dropTargetColumn.dataset.path || "");
+        }
+      });
 
       root.addEventListener("focusin", (event) => {
         const row = event.target.closest(".finder-row");
@@ -795,6 +957,52 @@
         }
       };
 
+      const bindExternalDrop = () => {
+        const getCurrentWindow = window.__TAURI__?.window?.getCurrentWindow;
+        if (typeof getCurrentWindow !== "function") return;
+        const currentWindow = getCurrentWindow();
+        if (!currentWindow || typeof currentWindow.onDragDropEvent !== "function") return;
+        Promise.resolve(
+          currentWindow.onDragDropEvent((event) => {
+            const payload = event?.payload || {};
+            const type = payload.type;
+            if (type === "leave") {
+              hideDropHint();
+              clearDropTarget();
+              externalDragPaths = [];
+              return;
+            }
+            if (type !== "over" && type !== "enter" && type !== "drop") {
+              return;
+            }
+            const sourcePaths = Array.isArray(payload.paths) ? payload.paths : [];
+            if (sourcePaths.length > 0) {
+              externalDragPaths = sourcePaths;
+            }
+            if (externalDragPaths.length === 0) return;
+            const point = getClientPointFromDrop(payload.position);
+            externalDragPoint = point;
+            const targetColumn = setDropTargetByPoint(point.x, point.y);
+            if (!targetColumn) {
+              hideDropHint();
+              return;
+            }
+            const targetDir = targetColumn.dataset.path || "";
+            updateDropHint(point.x, point.y, targetDir);
+            if (type === "drop") {
+              commitExternalDrop(targetDir, getDropOperation());
+            }
+          }),
+        )
+          .then((unlisten) => {
+            dragDropUnlisten = typeof unlisten === "function" ? unlisten : null;
+          })
+          .catch((error) => {
+            logNav("onDragDropEvent bind failed", {error: String(error)});
+          });
+      };
+      bindExternalDrop();
+
       document.addEventListener("keydown", onKeyDown);
       root.addEventListener("htmx:beforeRequest", () => {
         saveScrollState();
@@ -802,6 +1010,12 @@
       root.addEventListener(
         "htmx:beforeCleanupElement",
         () => {
+          hideDropHint();
+          clearDropTarget();
+          if (typeof dragDropUnlisten === "function") {
+            dragDropUnlisten();
+            dragDropUnlisten = null;
+          }
           saveScrollState();
           document.removeEventListener("keydown", onKeyDown);
         },

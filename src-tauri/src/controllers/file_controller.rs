@@ -1,7 +1,7 @@
 use serde::Serialize;
 use std::{
     env, fs,
-    io::Write,
+    io::{ErrorKind, Write},
     io::Read,
     path::{Path, PathBuf},
     sync::Mutex,
@@ -24,6 +24,7 @@ struct FileEntry {
 #[derive(Debug, Serialize)]
 struct Column {
     title: String,
+    path: String,
     entries: Vec<FileEntry>,
     selected_path: String,
 }
@@ -334,6 +335,7 @@ fn build_columns(home: &Path, focus_path: Option<&Path>) -> Vec<Column> {
 
         columns.push(Column {
             title: label_from_path(&parent_dir),
+            path: parent_dir.to_string_lossy().to_string(),
             entries,
             selected_path: selected_path.clone(),
         });
@@ -347,6 +349,124 @@ fn build_columns(home: &Path, focus_path: Option<&Path>) -> Vec<Column> {
     }
 
     columns
+}
+
+fn copy_path_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    let metadata = fs::metadata(src)?;
+    if metadata.is_dir() {
+        fs::create_dir_all(dst)?;
+        for entry in fs::read_dir(src)? {
+            let entry = entry?;
+            let child_src = entry.path();
+            let child_dst = dst.join(entry.file_name());
+            copy_path_recursive(&child_src, &child_dst)?;
+        }
+        Ok(())
+    } else {
+        if let Some(parent) = dst.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(src, dst)?;
+        Ok(())
+    }
+}
+
+fn unique_destination_path(target_dir: &Path, source_path: &Path) -> PathBuf {
+    let fallback_name = "item".to_string();
+    let file_name = source_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.to_string())
+        .unwrap_or(fallback_name);
+    let candidate = target_dir.join(&file_name);
+    if !candidate.exists() {
+        return candidate;
+    }
+
+    let source_is_dir = source_path.is_dir();
+    if source_is_dir {
+        for index in 1..10_000 {
+            let suffix = if index == 1 {
+                " copy".to_string()
+            } else {
+                format!(" copy {index}")
+            };
+            let next = target_dir.join(format!("{file_name}{suffix}"));
+            if !next.exists() {
+                return next;
+            }
+        }
+        return target_dir.join(format!("{file_name} copy"));
+    }
+
+    let source = Path::new(&file_name);
+    let stem = source
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("file");
+    let ext = source.extension().and_then(|value| value.to_str());
+    for index in 1..10_000 {
+        let suffix = if index == 1 {
+            " copy".to_string()
+        } else {
+            format!(" copy {index}")
+        };
+        let next_name = if let Some(ext) = ext {
+            format!("{stem}{suffix}.{ext}")
+        } else {
+            format!("{stem}{suffix}")
+        };
+        let next = target_dir.join(next_name);
+        if !next.exists() {
+            return next;
+        }
+    }
+
+    target_dir.join(file_name)
+}
+
+fn move_path_with_fallback(src: &Path, dst: &Path) -> std::io::Result<()> {
+    match fs::rename(src, dst) {
+        Ok(_) => Ok(()),
+        Err(err) if err.kind() == ErrorKind::CrossesDevices => {
+            copy_path_recursive(src, dst)?;
+            if src.is_dir() {
+                fs::remove_dir_all(src)?;
+            } else {
+                fs::remove_file(src)?;
+            }
+            Ok(())
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn perform_drop_operation(
+    home: &Path,
+    target_dir: &Path,
+    source_paths: &[String],
+    operation: &str,
+) -> Result<(), String> {
+    if !target_dir.starts_with(home) || !target_dir.is_dir() {
+        return Err("invalid target directory".to_string());
+    }
+    if source_paths.is_empty() {
+        return Ok(());
+    }
+
+    for source in source_paths {
+        let src = PathBuf::from(source);
+        if !src.exists() {
+            continue;
+        }
+        let destination = unique_destination_path(target_dir, &src);
+        if operation == "move" {
+            move_path_with_fallback(&src, &destination).map_err(|error| error.to_string())?;
+        } else {
+            copy_path_recursive(&src, &destination).map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(())
 }
 
 fn home_directory() -> PathBuf {
@@ -657,6 +777,35 @@ pub fn close_tab(state: State<'_, FileTabsState>, tab_id: String) -> String {
 
     persist_tabs_model(&model);
     render_view(&model)
+}
+
+#[tauri::command]
+pub fn drop_files_into_directory(
+    state: State<'_, FileTabsState>,
+    target_dir: String,
+    source_paths: Vec<String>,
+    operation: String,
+) -> Result<String, String> {
+    let home = home_directory();
+    let mut model = state
+        .tabs
+        .lock()
+        .map_err(|_| "failed to lock tabs state".to_string())?;
+    ensure_tabs(&mut model, &home);
+
+    let op = operation.to_ascii_lowercase();
+    if op != "copy" && op != "move" {
+        return Err("unsupported operation".to_string());
+    }
+
+    let target = normalize_tab_path(&home, Some(&target_dir));
+    perform_drop_operation(&home, &target, &source_paths, &op)?;
+
+    if let Some(tab) = active_tab_mut(&mut model) {
+        tab.focus_path = Some(target.to_string_lossy().to_string());
+    }
+    persist_tabs_model(&model);
+    Ok(render_view(&model))
 }
 
 #[tauri::command]

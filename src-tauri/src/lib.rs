@@ -54,6 +54,7 @@ pub fn run() {
             file_controller::activate_tab,
             file_controller::new_tab,
             file_controller::close_tab,
+            file_controller::drop_files_into_directory,
             file_controller::show_file_context_menu,
         ])
         .run(tauri::generate_context!())
