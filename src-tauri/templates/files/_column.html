@@ -1,5 +1,18 @@
 <section class="finder-column" data-column="{{ column_index }}" data-path="{{ column.path }}">
-  <div class="column-header" data-path="{{ column.path }}" data-is-dir="true">{{ column.title }}</div>
+  <div class="column-header" data-path="{{ column.path }}" data-is-dir="true">
+    <span class="column-title">{{ column.title }}</span>
+    <button
+      class="column-sort-button"
+      type="button"
+      title="Toggle sort mode"
+      hx-get="command/set_directory_sort"
+      hx-target="#main-root"
+      hx-swap="outerHTML"
+      hx-vals='{"path": {{ column.path | json_encode }}, "mode": {% if column.sort_mode == "recent_first" %}"alphabetical"{% else %}"recent_first"{% endif %} }'
+    >
+      {% if column.sort_mode == "recent_first" %}Recent{% else %}A-Z{% endif %}
+    </button>
+  </div>
   <div class="column-body">
     {% set selected_path = column.selected_path %}
     {% for entry in column.entries %}

@@ -1,11 +1,13 @@
 use serde::Serialize;
 use std::{
+    collections::BTreeMap,
     env, fs,
     io::{ErrorKind, Write},
     io::Read,
     path::{Path, PathBuf},
     process::Command,
     sync::Mutex,
+    time::UNIX_EPOCH,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 use tauri::{
@@ -26,6 +28,7 @@ struct FileEntry {
 struct Column {
     title: String,
     path: String,
+    sort_mode: String,
     entries: Vec<FileEntry>,
     selected_path: String,
 }
@@ -59,6 +62,30 @@ struct TabState {
     focus_path: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum DirectorySortMode {
+    Alphabetical,
+    RecentFirst,
+}
+
+impl Default for DirectorySortMode {
+    fn default() -> Self {
+        Self::Alphabetical
+    }
+}
+
+impl DirectorySortMode {
+    fn from_input(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "alphabetical" => Some(Self::Alphabetical),
+            "recent_first" | "recent" | "updated" => Some(Self::RecentFirst),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug)]
 #[derive(serde::Serialize, serde::Deserialize)]
 struct TabsModel {
@@ -68,6 +95,8 @@ struct TabsModel {
     active_id: u64,
     #[serde(default = "default_next_id")]
     next_id: u64,
+    #[serde(default)]
+    directory_sorts: BTreeMap<String, DirectorySortMode>,
     #[serde(default)]
     window: Option<WindowGeometry>,
 }
@@ -92,10 +121,11 @@ fn default_next_id() -> u64 {
 #[derive(Debug)]
 struct SortableEntry {
     name_key: String,
+    modified_ms: u128,
     entry: FileEntry,
 }
 
-fn list_directory(path: &PathBuf) -> Vec<FileEntry> {
+fn list_directory(path: &PathBuf, sort_mode: DirectorySortMode) -> Vec<FileEntry> {
     let Ok(entries) = fs::read_dir(path) else {
         return Vec::new();
     };
@@ -111,9 +141,16 @@ fn list_directory(path: &PathBuf) -> Vec<FileEntry> {
             }
             let metadata = entry.metadata().ok()?;
             let is_dir = metadata.is_dir();
+            let modified_ms = metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                .map(|duration| duration.as_millis())
+                .unwrap_or(0);
 
             Some(SortableEntry {
                 name_key: name.to_lowercase(),
+                modified_ms,
                 entry: FileEntry {
                     icon: icon_for_entry(&name, is_dir),
                     name,
@@ -124,12 +161,25 @@ fn list_directory(path: &PathBuf) -> Vec<FileEntry> {
         })
         .collect();
 
-    items.sort_by(|a, b| {
-        b.entry
-            .is_dir
-            .cmp(&a.entry.is_dir)
-            .then_with(|| a.name_key.cmp(&b.name_key))
-    });
+    match sort_mode {
+        DirectorySortMode::Alphabetical => {
+            items.sort_by(|a, b| {
+                b.entry
+                    .is_dir
+                    .cmp(&a.entry.is_dir)
+                    .then_with(|| a.name_key.cmp(&b.name_key))
+            });
+        }
+        DirectorySortMode::RecentFirst => {
+            items.sort_by(|a, b| {
+                b.entry
+                    .is_dir
+                    .cmp(&a.entry.is_dir)
+                    .then_with(|| b.modified_ms.cmp(&a.modified_ms))
+                    .then_with(|| a.name_key.cmp(&b.name_key))
+            });
+        }
+    }
 
     items.into_iter().map(|item| item.entry).collect()
 }
@@ -325,7 +375,11 @@ fn is_directory(path: &Path) -> bool {
     fs::metadata(path).map(|meta| meta.is_dir()).unwrap_or(false)
 }
 
-fn build_columns(home: &Path, focus_path: Option<&Path>) -> Vec<Column> {
+fn build_columns(
+    home: &Path,
+    focus_path: Option<&Path>,
+    directory_sorts: &BTreeMap<String, DirectorySortMode>,
+) -> Vec<Column> {
     let components = focus_path
         .filter(|path| path.starts_with(home))
         .map(|path| components_under_home(home, path))
@@ -335,7 +389,11 @@ fn build_columns(home: &Path, focus_path: Option<&Path>) -> Vec<Column> {
     let mut depth = 0usize;
 
     loop {
-        let entries = list_directory(&parent_dir);
+        let sort_mode = directory_sorts
+            .get(&parent_dir.to_string_lossy().to_string())
+            .copied()
+            .unwrap_or(DirectorySortMode::Alphabetical);
+        let entries = list_directory(&parent_dir, sort_mode);
         let selected_path = if let Some(component) = components.get(depth) {
             let candidate = parent_dir.join(component);
             let candidate_str = candidate.to_string_lossy().to_string();
@@ -351,6 +409,10 @@ fn build_columns(home: &Path, focus_path: Option<&Path>) -> Vec<Column> {
         columns.push(Column {
             title: label_from_path(&parent_dir),
             path: parent_dir.to_string_lossy().to_string(),
+            sort_mode: match sort_mode {
+                DirectorySortMode::Alphabetical => "alphabetical".to_string(),
+                DirectorySortMode::RecentFirst => "recent_first".to_string(),
+            },
             entries,
             selected_path: selected_path.clone(),
         });
@@ -593,6 +655,7 @@ impl Default for FileTabsState {
             tabs: Vec::new(),
             active_id: 1,
             next_id: 2,
+            directory_sorts: BTreeMap::new(),
             window: None,
         });
         Self {
@@ -633,6 +696,10 @@ fn relative_path_from_root(path: &Path, root: &Path) -> String {
 }
 
 fn ensure_tabs(model: &mut TabsModel, home: &Path) {
+    model.directory_sorts.retain(|path, mode| {
+        PathBuf::from(path).starts_with(home) && *mode != DirectorySortMode::Alphabetical
+    });
+
     for tab in &mut model.tabs {
         if let Some(root) = tab.root_path.clone() {
             let normalized = normalize_tab_path(home, Some(&root));
@@ -738,7 +805,11 @@ fn render_view(model: &TabsModel) -> String {
         .and_then(|tab| tab.focus_path.clone())
         .map(PathBuf::from)
         .filter(|path| path.starts_with(&active_root_path));
-    let columns = build_columns(&active_root_path, active_focus_path.as_deref());
+    let columns = build_columns(
+        &active_root_path,
+        active_focus_path.as_deref(),
+        &model.directory_sorts,
+    );
     let preview = build_preview(active_focus_path.as_deref());
     let active_path_for_new = active_focus_path
         .as_ref()
@@ -1135,6 +1206,36 @@ pub fn create_file(
     }
     fs::File::create(&target).map_err(|error| error.to_string())?;
     set_active_focus_after_path_change(&mut model, &home, Some(&target), &parent);
+    persist_tabs_model(&model);
+    Ok(render_view(&model))
+}
+
+#[tauri::command]
+pub fn set_directory_sort(
+    state: State<'_, FileTabsState>,
+    path: String,
+    mode: String,
+) -> Result<String, String> {
+    let home = home_directory();
+    let mut model = state
+        .tabs
+        .lock()
+        .map_err(|_| "failed to lock tabs state".to_string())?;
+    ensure_tabs(&mut model, &home);
+
+    let directory = resolve_home_scoped_path(&home, &path)?;
+    if !directory.is_dir() {
+        return Err("path is not a directory".to_string());
+    }
+    let parsed_mode =
+        DirectorySortMode::from_input(&mode).ok_or_else(|| "invalid sort mode".to_string())?;
+    let key = directory.to_string_lossy().to_string();
+    if parsed_mode == DirectorySortMode::Alphabetical {
+        model.directory_sorts.remove(&key);
+    } else {
+        model.directory_sorts.insert(key, parsed_mode);
+    }
+
     persist_tabs_model(&model);
     Ok(render_view(&model))
 }

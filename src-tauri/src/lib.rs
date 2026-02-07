@@ -264,6 +264,7 @@ pub fn run() {
             file_controller::delete_path,
             file_controller::create_directory,
             file_controller::create_file,
+            file_controller::set_directory_sort,
             file_controller::set_tab_root,
             file_controller::open_in_zed,
             file_controller::open_in_warp,
