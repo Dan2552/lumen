@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="modern-normalize.min.css" />
+    <link rel="stylesheet" href="test-styles.css" />
+    <link rel="stylesheet" href="lucide/font/lucide.css" />
+    <script src="./sortable/Sortable.min.js"></script>
+    <script src="./sortable/sortable+citadel.js" defer></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Citadel</title>
+  </head>
+
+  <body class="no-select edit-block-is-enabled">
+    <div class="real-background"></div>
+    <main>
+      <div class="top-bar">
+        <div class="flex-container full-width">
+          <input type="search" id="search" class="flex-full-width" name="search" placeholder="Search" />
+          <button class="button-action">New Item</button>
+        </div>
+      </div>
+
+      <div class="cards-container">
+
+        <!-- <div class="card">
+          <div class="card-row-header">
+            <span class="card-title">Google</span>
+            <button class="button-plain" role="button">Edit</button>
+          </div>
+
+          <div class="card-row indent">
+            <div class="card-row-title">Password</div>
+            <span class="card-row-body">
+              <div class="flex-container">
+                <span class="placeholder flex-full-width"></span>
+                <button class="button-plain"><i class="icon-copy" alt="Copy"></i></button>
+              </div>
+            </span>
+          </div>
+
+
+          <div class="card-row">
+            <div class="card-row-title">One-Time Password</div>
+            <div class="card-row-body">
+              <span class="placeholder" style="width: 100px;"></span>
+              <button class="button-plain"><i class="icon-copy" alt="Copy"></i></button>
+            </div>
+          </div>
+
+          <div class="card-row">
+            <div class="card-row-title">Notes</div>
+            <div class="card-row-body">
+              <span class="placeholder" style="width: 100%; height: 100px;"></span>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-row-header">
+            <span class="card-title">Banana</span>
+            <button class="button-plain" role="button">Edit</button>
+          </div>
+
+          <div class="card-row indent">
+            <div class="card-row-title">Password</div>
+            <span class="card-row-body">
+              <div class="flex-container">
+                <span class="placeholder flex-full-width"></span>
+                <button class="button-plain"><i class="icon-copy" alt="Copy"></i></button>
+              </div>
+            </span>
+          </div>
+
+          <div class="card-row">
+            <div class="card-row-title">Files</div>
+            <div class="card-row-body">
+              <div class="file">
+                <i class="icon-file-text" alt="File"></i>
+                <span class="file-label">example.txt</span>
+              </div>
+              <div class="file">
+                <i class="icon-file-image" alt="File"></i>
+                <span class="file-label">example.png</span>
+              </div>
+              <div class="file">
+                <i class="icon-file-image" alt="File"></i>
+                <span class="file-label">example.png</span>
+              </div>
+            </div>
+          </div>
+        </div> -->
+        <div class="card card-edit">
+          <div class="animated-border-box-glow"></div>
+          <div class="animated-border-box"></div>
+          <div class="card-row-header">
+            <input type="text" class="card-title heading-input" value="Apple" placeholder="Item name" />
+            <div>
+              <button class="button-plain" role="button">Cancel</button>
+              <button class="button-action" role="button">Save</button>
+            </div>
+          </div>
+<div class="sortable-list">
+  <div class="sortable-item">
+          <div class="separator"></div>
+
+          <div class="card-row-header">
+            <span class="card-title sortable-handle">a Password field</span>
+            <a href="#" class="button-danger"><i class="icon-trash" alt="Delete"></i></a>
+          </div>
+
+          <div class="card-row">
+            <span class="card-row-body">
+              <input type="text" class="heading-input" value="Password" placeholder="Password (label)" />
+            </span>
+
+            <span class="card-row-body">
+              <div class="flex-container">
+                <input type="password" class="flex-full-width" value="example" />
+              </div>
+            </span>
+          </div>
+
+  </div>
+  <div class="sortable-item">
+          <div class="separator"></div>
+
+          <div class="card-row-header">
+            <span class="card-title sortable-handle">b Password field</span>
+            <a href="#" class="button-danger"><i class="icon-trash" alt="Delete"></i></a>
+          </div>
+
+          <div class="card-row">
+            <span class="card-row-body">
+              <input type="text" class="heading-input" value="Password" placeholder="Password (label)" />
+            </span>
+
+            <span class="card-row-body">
+              <div class="flex-container">
+                <input type="password" class="flex-full-width" value="example" />
+              </div>
+            </span>
+          </div>
+</div>
+</div>
+          <div class="separator"></div>
+
+          <div class="card-row-header">
+            <span class="card-title">Files field</span>
+            <a href="#" class="button-danger"><i class="icon-trash" alt="Delete"></i></a>
+          </div>
+
+          <div class="card-row">
+            <span class="card-row-body">
+              <input type="text" class="heading-input" value="Files" />
+            </span>
+            <div class="card-row-body">
+              <div class="file">
+                <button class="button-danger"><i class="icon-trash" alt="Delete"></i></button>
+                <i class="icon-file-text" alt="File"></i>
+                <span class="file-label">example.txt</span>
+              </div>
+              <div class="potential-file">
+                <button class="button-plain">Add file</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="separator"></div>
+
+          <div class="card-row">
+            <div class="potential-field">
+              <button class="button-plain">Add field</button>
+            </div>
+          </div>
+
+          <div class="separator"></div>
+
+          <div class="card-row">
+            <div class="potential-field">
+              <select
+                class="clear-default-style fixed-auto-width button-plain"
+                onchange="alert('change');"
+              >
+                <option value="" disabled selected hidden>Add field</option>
+                <option value="1">Option 1</option>
+                <option value="2">Option 2</option>
+                <option value="3">Option 3</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="separator"></div>
+
+          <div class="card-row">
+            <button class="button-danger full-width">Delete item</button>
+          </div>
+        </div>
+
+        <div class="edit-block"></div>
+      </div>
+    </main>
+  </body>
+</html>
+
+<script>
+
+
+  // Apply the focus trap to the element with class 'card-edit'
+  // const cardEditElement = document.querySelector('.card-edit');
+  // disableOutsideTab(cardEditElement);
+
+  // after 10 seconds re-enable tabbing
+  // setTimeout(() => {
+  //   enableOutsideTab();
+  // }, 10000);
+
+  // Optionally, set initial focus to the first focusable element
+  // cardEditElement.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')?.focus();
+</script>
+
+<script>
+  // Function to update the order numbers in the hidden input fields
+  // function updateOrderNumbers() {
+  //   const items = document.querySelectorAll('.sortable-item');
+  //   items.forEach((item, index) => {
+  //     const orderNumber = index + 1; // Order starts from 1
+  //     item.dataset.order = orderNumber; // Update the data-order attribute
+  //     // const hiddenInput = item.querySelector('.hidden-input');
+  //     // hiddenInput.value = orderNumber; // Update the hidden input value
+  //   });
+  // }
+
+  // // Initialize Sortable.js
+  // const sortable = new Sortable(document.querySelectorAll('sortable-list'), {
+  //   handle: '.sortable-handle', // Only allow dragging by the handle
+  //   animation: 150, // Animation speed in ms
+  //   onEnd: function () {
+  //     updateOrderNumbers(); // Update order numbers after sorting
+  //   }
+  // });
+
+  // // Initial update of order numbers
+  // updateOrderNumbers();
+</script>

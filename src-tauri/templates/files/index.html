@@ -1,0 +1,429 @@
+<div id="main-root" class="files-root" data-active-tab-id="{{ active_tab_id }}">
+  <style>
+    #main-root.files-root {
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      margin: 0;
+      background: #2b313f;
+      color: #c2c9d6;
+      font-family: "SF Pro Text", "SF Pro Display", "Segoe UI", sans-serif;
+      font-size: 13px;
+      line-height: 1.4;
+      letter-spacing: 0.01em;
+    }
+
+    .tabs-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 36px;
+      padding: 4px 8px;
+      background: rgba(26, 31, 41, 0.95);
+      border-bottom: 1px solid #3a4151;
+      overflow-x: auto;
+      flex-shrink: 0;
+    }
+
+    .tab-button {
+      height: 28px;
+      min-width: 110px;
+      max-width: 220px;
+      padding: 0 10px;
+      border: 1px solid #4b5364;
+      border-radius: 7px;
+      background: #3a4254;
+      color: #c4cada;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      cursor: default;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+
+    .tab-shell {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid #4b5364;
+      border-radius: 7px;
+      background: #3a4254;
+      overflow: hidden;
+      flex-shrink: 0;
+      max-width: 260px;
+    }
+
+    .tab-shell.is-active {
+      background: #596277;
+      border-color: #6f7990;
+    }
+
+    .tab-shell .tab-button {
+      border: none;
+      background: transparent;
+      max-width: 228px;
+      border-radius: 0;
+    }
+
+    .tab-shell.is-active .tab-button {
+      color: #f4f7ff;
+    }
+
+    .tab-close {
+      width: 24px;
+      min-width: 24px;
+      height: 28px;
+      border: none;
+      border-left: 1px solid rgba(140, 150, 170, 0.35);
+      background: transparent;
+      color: #aeb6c7;
+      font-size: 12px;
+      cursor: default;
+      padding: 0;
+    }
+
+    .tab-shell.is-active .tab-close {
+      color: #dce5f7;
+      border-left-color: rgba(170, 184, 209, 0.45);
+    }
+
+    .tab-plus {
+      width: 28px;
+      min-width: 28px;
+      justify-content: center;
+      font-size: 15px;
+      padding: 0;
+    }
+
+    .finder-layout {
+      display: flex;
+      height: calc(100% - 36px);
+      background: linear-gradient(180deg, #323949 0%, #2b313f 100%);
+      border-right: 1px solid #404759;
+      overflow: hidden;
+    }
+
+    .finder-column {
+      width: 280px;
+      min-width: 240px;
+      border-right: 1px solid #404759;
+      background: rgba(38, 44, 58, 0.45);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .column-header {
+      padding: 8px 12px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #9aa3b4;
+      border-bottom: 1px solid #3b4354;
+      background: rgba(34, 40, 52, 0.6);
+    }
+
+    .column-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 6px 0;
+    }
+
+    .finder-row {
+      width: 100%;
+      appearance: none;
+      background: transparent;
+      border: 1px solid transparent;
+      text-align: left;
+      cursor: default;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 30px;
+      padding: 0 12px;
+      white-space: nowrap;
+    }
+
+    .finder-row:focus-visible {
+      outline: 1px solid #7fb3ff;
+      outline-offset: -1px;
+    }
+
+    .finder-row.is-selected {
+      background: #525a6c;
+      border-color: #677189;
+      border-left-width: 2px;
+      color: #e9eef9;
+    }
+
+    .finder-column.is-active .finder-row.is-selected {
+      background: #1f5fbf;
+      border-color: #2f86e9;
+      color: #f3f6ff;
+    }
+
+    .row-icon {
+      width: 16px;
+      font-size: 15px;
+      color: #aab3c4;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    .finder-row.is-selected .row-icon {
+      color: #d3d9e5;
+    }
+
+    .finder-column.is-active .finder-row.is-selected .row-icon {
+      color: #d9e6ff;
+    }
+
+    .row-name {
+      flex: 1;
+      min-width: 0;
+      color: #d4dbe8;
+      text-overflow: ellipsis;
+      overflow: hidden;
+    }
+
+    .row-name.is-file {
+      color: #b8c0ce;
+    }
+
+    .row-disclosure {
+      margin-left: auto;
+      width: 14px;
+      font-size: 13px;
+      color: #8993a6;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    .finder-row.is-selected .row-disclosure {
+      color: #c9d0dd;
+    }
+
+    .finder-column.is-active .finder-row.is-selected .row-disclosure {
+      color: #dce9ff;
+    }
+  </style>
+
+  <div class="tabs-bar">
+    {% for tab in tabs %}
+    <div class="tab-shell {% if tab.is_active %}is-active{% endif %}">
+    <button
+      class="tab-button"
+      type="button"
+      hx-get="command/activate_tab"
+      hx-target="#main-root"
+      hx-swap="outerHTML"
+      hx-vals='{"tabId": {{ tab.id | json_encode }} }'
+    >{{ tab.title }}</button>
+    <button
+      class="tab-close"
+      type="button"
+      hx-get="command/close_tab"
+      hx-target="#main-root"
+      hx-swap="outerHTML"
+      hx-vals='{"tabId": {{ tab.id | json_encode }} }'
+    >x</button>
+    </div>
+    {% endfor %}
+    <button
+      class="tab-button tab-plus"
+      type="button"
+      hx-get="command/new_tab"
+      hx-target="#main-root"
+      hx-swap="outerHTML"
+      hx-vals='{"path": {{ active_path | json_encode }} }'
+    >+</button>
+  </div>
+
+  <div class="finder-layout">
+    {% for column in columns %}
+      {% set column_index = loop.index0 %}
+      {% include "files/_column.html" %}
+    {% endfor %}
+  </div>
+
+  <script>
+    (() => {
+      const root = document.getElementById("main-root");
+      if (!root) return;
+      const activeTabId = root.dataset.activeTabId || "default";
+      window.__filesFocusPathByTab = window.__filesFocusPathByTab || {};
+      const getFocusPath = () => window.__filesFocusPathByTab[activeTabId] || null;
+      const setFocusPath = (path) => {
+        window.__filesFocusPathByTab[activeTabId] = path;
+      };
+
+      const rows = Array.from(root.querySelectorAll(".finder-row"));
+      if (rows.length === 0) return;
+      const columns = Array.from(root.querySelectorAll(".finder-column"));
+
+      const selectedRows = rows.filter((row) => row.classList.contains("is-selected"));
+      const rowsByColumn = new Map();
+
+      for (const row of rows) {
+        const column = Number(row.dataset.column || 0);
+        if (!rowsByColumn.has(column)) rowsByColumn.set(column, []);
+        rowsByColumn.get(column).push(row);
+      }
+
+      const rightmostSelected = () =>
+        [...selectedRows].sort((a, b) => Number(a.dataset.column) - Number(b.dataset.column)).at(-1);
+      const selectedInColumn = (columnIndex) =>
+        selectedRows.find((row) => Number(row.dataset.column) === columnIndex) || null;
+
+      const setActiveColumn = (columnIndex) => {
+        for (const column of columns) {
+          column.classList.toggle("is-active", Number(column.dataset.column) === columnIndex);
+        }
+      };
+
+      let initialFromRight = null;
+      if (window.__filesPendingRightFromPath) {
+        const anchor = rows.find(
+          (row) =>
+            row.dataset.path === window.__filesPendingRightFromPath && row.classList.contains("is-selected"),
+        );
+        if (anchor) {
+          const nextColumn = Number(anchor.dataset.column || 0) + 1;
+          initialFromRight = selectedInColumn(nextColumn) || (rowsByColumn.get(nextColumn) || [])[0] || null;
+        }
+        window.__filesPendingRightFromPath = null;
+      }
+
+      const focusedRow =
+        root.contains(document.activeElement) && document.activeElement.classList.contains("finder-row")
+          ? document.activeElement
+          : null;
+      const rememberedRow = rows.find((row) => row.dataset.path === getFocusPath());
+      const initialRow = initialFromRight || focusedRow || rememberedRow || rightmostSelected() || null;
+
+      if (initialRow) {
+        setFocusPath(initialRow.dataset.path);
+        initialRow.focus({preventScroll: true});
+        setActiveColumn(Number(initialRow.dataset.column || 0));
+      }
+
+      const pendingContextMenu = window.__filesPendingContextMenu;
+      if (pendingContextMenu) {
+        window.__filesPendingContextMenu = null;
+        const invoke = window.__TAURI__?.core?.invoke;
+        if (typeof invoke === "function") {
+          invoke("show_file_context_menu", pendingContextMenu).catch(() => {});
+        }
+      }
+
+      root.addEventListener("click", (event) => {
+        const row = event.target.closest(".finder-row");
+        if (!row) return;
+        setFocusPath(row.dataset.path);
+        setActiveColumn(Number(row.dataset.column || 0));
+      });
+
+      root.addEventListener("contextmenu", (event) => {
+        const row = event.target.closest(".finder-row");
+        if (!row) return;
+
+        event.preventDefault();
+        window.__filesPendingContextMenu = {
+          path: row.dataset.path,
+          x: event.clientX,
+          y: event.clientY,
+        };
+        row.click();
+      });
+
+      root.addEventListener("focusin", (event) => {
+        const row = event.target.closest(".finder-row");
+        if (!row) return;
+        setFocusPath(row.dataset.path);
+        setActiveColumn(Number(row.dataset.column || 0));
+      });
+
+      const onKeyDown = (event) => {
+        if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
+
+        const activeTag = document.activeElement?.tagName || "";
+        if (activeTag === "INPUT" || activeTag === "TEXTAREA" || activeTag === "SELECT") return;
+        if (document.activeElement?.isContentEditable) return;
+
+        const current =
+          (root.contains(document.activeElement) && document.activeElement.classList.contains("finder-row")
+            ? document.activeElement
+            : null) ||
+          rows.find((row) => row.dataset.path === getFocusPath()) ||
+          rightmostSelected() ||
+          null;
+        if (!current) {
+          if (event.key === "ArrowDown") {
+            const firstColumnRow = (rowsByColumn.get(0) || [])[0] || null;
+            if (!firstColumnRow) return;
+            event.preventDefault();
+            setFocusPath(firstColumnRow.dataset.path);
+            firstColumnRow.focus({preventScroll: true});
+            setActiveColumn(0);
+            firstColumnRow.click();
+          }
+          return;
+        }
+
+        const columnIndex = Number(current.dataset.column || 0);
+        const columnRows = rowsByColumn.get(columnIndex) || [];
+        const rowIndex = columnRows.findIndex((row) => row.dataset.path === current.dataset.path);
+        let target = null;
+        let shouldNavigate = false;
+
+        if (event.key === "ArrowUp" && rowIndex > 0) {
+          target = columnRows[rowIndex - 1];
+          shouldNavigate = true;
+        } else if (event.key === "ArrowDown" && rowIndex >= 0 && rowIndex < columnRows.length - 1) {
+          target = columnRows[rowIndex + 1];
+          shouldNavigate = true;
+        } else if (event.key === "ArrowLeft" && columnIndex > 0) {
+          target =
+            selectedInColumn(columnIndex - 1) ||
+            (rowsByColumn.get(columnIndex - 1) || [])[0] ||
+            null;
+        } else if (event.key === "ArrowRight") {
+          if (current.dataset.isDir === "true") {
+            event.preventDefault();
+            window.__filesPendingRightFromPath = current.dataset.path;
+            setFocusPath(current.dataset.path);
+            current.click();
+            return;
+          } else {
+            target =
+              selectedInColumn(columnIndex + 1) ||
+              (rowsByColumn.get(columnIndex + 1) || [])[0] ||
+              null;
+          }
+        }
+
+        if (!target) return;
+
+        event.preventDefault();
+        setFocusPath(target.dataset.path);
+        target.focus({preventScroll: true});
+        setActiveColumn(Number(target.dataset.column || 0));
+        if (shouldNavigate) {
+          target.click();
+        }
+      };
+
+      document.addEventListener("keydown", onKeyDown);
+      root.addEventListener(
+        "htmx:beforeCleanupElement",
+        () => {
+          document.removeEventListener("keydown", onKeyDown);
+        },
+        {once: true},
+      );
+    })();
+  </script>
+</div>

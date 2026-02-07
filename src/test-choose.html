@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="modern-normalize.min.css" />
+    <link rel="stylesheet" href="test-styles.css" />
+    <link rel="stylesheet" href="lucide/font/lucide.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Citadel</title>
+  </head>
+
+  <body>
+    <div class="locked-vault">
+      <div class="card">
+        <i class="icon-folder-search icon-super-large" alt="Locked"></i>
+        <p>Open an existing vault or simply choose an empty directory to create a new vault.</p>
+
+
+        <div class="centered-horizontally">
+          <button
+            class="button-action
+            hx-get="command/choose_vault_directory"
+            hx-swap="outerHTML"
+            hx-target="#main-root"
+            hx-trigger="click">Choose directory</button>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

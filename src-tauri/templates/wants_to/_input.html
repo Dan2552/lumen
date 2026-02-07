@@ -1,0 +1,43 @@
+<div style="padding: 12px; border-radius: 5px; margin-top: 12px;">
+  <div class="flex-container full-width">
+    {{ input.label }}
+  </div>
+
+  <div class="flex-container full-width">
+    <select
+      style="
+        margin-top: 16px;
+      {% if matching_items | length == 0 %}
+        border: 2px dashed #f55656;
+      {% endif %}
+      "
+      class="clear-default-style button-plain select-arrow full-width wants-to-select"
+      name="submit[inputs][{{ input.uuid }}]"
+      id="submit"
+      {% if matching_items | length == 0 %}
+        disabled
+      {% endif %}
+    >
+      {% if matching_items | length == 0 %}
+        <option value="none">No matching vault items</option>
+      {% else %}
+        <option value="none">Do not autofill</option>
+      {% endif %}
+
+      {% for vault_item in matching_items %}
+        <optgroup label="{{ vault_item.attributes.name }}">
+          {% for field in vault_item.fields %}
+            <option
+              value="{{ vault_item.id }},{{ field.id }},{{ input.label }}"
+              {% if field.attributes.auto_fill_fields is containing(input.label | lower) %}
+                selected
+              {% endif %}
+            >
+              {{ field.attributes.name }}{% if (field.attributes.name | lower != field.attributes.field_type | lower) and field.attributes.name != "One-Time Password" %} ({{ field.attributes.field_type }}){% endif %}
+            </option>
+          {% endfor %}
+        </optgroup>
+      {% endfor %}
+    </select>
+  </div>
+</div>

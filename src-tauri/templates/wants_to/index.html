@@ -1,0 +1,79 @@
+<div class="locked-vault no-select">
+  <div class="outside-card-block">
+    <i class="icon-pencil icon-large"></i>
+    <p><strong>{{ current_wants_to.request_name }}</strong> wants to fill in your details</p>
+    for <strong class="yes-select">{{ current_wants_to.request_payload.domain }}</strong>
+  </div>
+
+  {% for form in current_wants_to.request_payload.forms %}
+    <div class="card">
+      <div style="text-align: left;">
+        {% for input in form.inputs %}
+          {% include "wants_to/_input.html" %}
+        {% endfor %}
+      </div>
+
+      <div class="centered-horizontally" style="margin-top: 16px;">
+        {% for button in form.buttons %}
+          <button
+            class="button-action wants-to-action"
+            hx-get="command/submit_wants_to"
+            hx-swap="outerHTML"
+            hx-target="this"
+            hx-trigger="click"
+            hx-vals='
+            {
+              "submit[button_id]": "{{ button.uuid }}"
+            }
+            '
+            hx-include=".wants-to-select"
+            disabled
+          >{{ button.text }}</button>
+        {% endfor %}
+
+        <button
+          class="button-plain wants-to-action"
+          hx-get="command/submit_wants_to"
+          hx-swap="outerHTML"
+          hx-target="this"
+          hx-trigger="click"
+          hx-vals='
+          {
+            "submit[button_id]": "autofill_only"
+          }
+          '
+          hx-include=".wants-to-select"
+          disabled
+        >Autofill only</button>
+      </div>
+
+    </div>
+  {% endfor %}
+
+  {% if current_wants_to.request_payload.orphanedFields | length > 0 %}
+    <div class="card">
+      <div style="text-align: left;">
+        {% for input in current_wants_to.request_payload.orphanedFields %}
+          {% include "wants_to/_input.html" %}
+        {% endfor %}
+
+        <div class="centered-horizontally" style="margin-top: 16px;">
+          <button
+            class="button-plain wants-to-action"
+            hx-get="command/submit_wants_to"
+            hx-swap="outerHTML"
+            hx-target="this"
+            hx-trigger="click"
+            hx-vals='
+            {
+              "submit[button_id]": "autofill_only"
+            }
+            '
+            hx-include=".wants-to-select"
+            disabled
+          >Autofill only</button>
+        </div>
+      </div>
+    </div>
+  {% endif %}
+</div>

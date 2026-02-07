@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="modern-normalize.min.css" />
+    <link rel="stylesheet" href="test-styles.css" />
+    <link rel="stylesheet" href="lucide/font/lucide.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lumen</title>
+    <script type="module" src="/main.js" defer></script>
+    <script src="/htmx+tauri.js" defer></script>
+    <script src="/htmx.org@2.0.4.js" defer></script>
+    <script src="/htmx+do-once.js" defer></script>
+    <script src="/edit_block.js" defer></script>
+    <script src="/select_button.js" defer></script>
+    <script src="/sortable/sortable.min.js" defer></script>
+    <script src="/sortable/sortable+citadel.js" defer></script>
+  </head>
+
+  <body class="no-select edit-block-is-enabled">
+    <div class="real-background"></div>
+    <main
+      id="main-root"
+      class="container"
+      hx-get="command/root"
+      hx-trigger="load"
+      hx-swap="outerHTML"
+      hx-target="this">
+    </main>
+  </body>
+</html>

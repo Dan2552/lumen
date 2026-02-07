@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="modern-normalize.min.css" />
+    <link rel="stylesheet" href="test-styles.css" />
+    <link rel="stylesheet" href="lucide/font/lucide.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Citadel</title>
+    <script src="select_button.js" defer></script>
+  </head>
+
+  <body>
+    <div class="locked-vault no-select">
+      <div class="outside-card-block">
+        <i class="icon-pencil icon-large"></i>
+        <p><strong>Google Chrome</strong> wants to fill in your details</p>
+        for <strong class="yes-select">authentication.rebaseface.com</strong>
+      </div>
+
+      <div class="card">
+        <div style="text-align: left;">
+          <div style="background-color: rgba(0, 0, 0, 0.00); padding: 12px; border-radius: 5px; margin-top: 12px;">
+            <div class="flex-container full-width">
+              Username or email address
+            </div>
+            <div class="flex-container full-width" style="padding-top: 16px;">
+              <select
+                class="clear-default-style button-plain select-arrow full-width"
+                name="submit"
+                id="submit"
+                disabled
+                style="border: 2px dashed #f55656;
+                ">
+                <option value="none">No matching vault items</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="text-align: left;">
+          <div style="padding: 12px; border-radius: 5px; margin-top: 12px;">
+            <div class="flex-container full-width">
+              Username or email address
+            </div>
+            <div class="flex-container full-width" style="padding-top: 16px;">
+              <select class="clear-default-style button-plain select-arrow full-width" name="submit" id="submit">
+                <optgroup label="Form 1">
+                  <option value="none">Don't autofill</option>
+                  <option value="none">Username</option>
+                  <option value="click">Password</option>
+                </optgroup>
+                <optgroup label="Form 2">
+                  <option value="another">Another field</option>
+                </optgroup>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div style="text-align: left;">
+          <div style="background-color: rgba(0, 0, 0, 0.00); padding: 12px; border-radius: 5px; margin-top: 12px;">
+            <div class="flex-container full-width">
+              Password
+            </div>
+            <div class="flex-container full-width" style="padding-top: 16px;">
+              <select
+                class="clear-default-style button-plain select-arrow full-width"
+                name="submit"
+                id="submit"
+                style="border: 2px dashed #4285f4;
+                "
+
+              >
+                <optgroup label="Form 1">
+                  <option value="none">Username</option>
+                  <option value="click">Password</option>
+                </optgroup>
+                <optgroup label="Form 2">
+                  <option value="another">Another field</option>
+                </optgroup>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="centered-horizontally" style="margin-top: 16px;">
+          <button
+            class="button-action"
+            hx-get="command/allow_auto_fill"
+            hx-swap="outerHTML"
+            hx-target="#main-root"
+            hx-trigger="click"
+            disabled
+          >Sign in</button>
+          <button
+            class="button-plain"
+            hx-get="command/allow_auto_fill"
+            hx-swap="outerHTML"
+            hx-target="#main-root"
+            hx-trigger="click"
+            disabled
+          >Autofill only</button>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

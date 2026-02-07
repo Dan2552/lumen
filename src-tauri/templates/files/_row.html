@@ -1,0 +1,17 @@
+<button
+  class="finder-row {% if entry.path == selected_path %}is-selected{% endif %}"
+  type="button"
+  data-path="{{ entry.path }}"
+  data-column="{{ column_index }}"
+  data-is-dir="{{ entry.is_dir }}"
+  hx-get="command/navigate"
+  hx-target="#main-root"
+  hx-swap="outerHTML"
+  hx-vals='{"path": {{ entry.path | json_encode }} }'
+>
+  {% include "files/_icon.html" %}
+  <span class="row-name {% if not entry.is_dir %}is-file{% endif %}">{{ entry.name }}</span>
+  {% if entry.is_dir %}
+  <i class="row-disclosure icon-chevron-right" aria-hidden="true"></i>
+  {% endif %}
+</button>

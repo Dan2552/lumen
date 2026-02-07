@@ -1,0 +1,9 @@
+<section class="finder-column" data-column="{{ column_index }}">
+  <div class="column-header">{{ column.title }}</div>
+  <div class="column-body">
+    {% set selected_path = column.selected_path %}
+    {% for entry in column.entries %}
+      {% include "files/_row.html" %}
+    {% endfor %}
+  </div>
+</section>
