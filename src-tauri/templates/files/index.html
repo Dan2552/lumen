@@ -2141,6 +2141,14 @@
 
       const onKeyDown = (event) => {
         const lowered = String(event.key || "").toLowerCase();
+        if (event.metaKey && lowered === "w") {
+          event.preventDefault();
+          event.stopPropagation();
+          if (activeTabId && activeTabId !== "default") {
+            htmxCommandSwap("close_tab", {tabId: activeTabId});
+          }
+          return;
+        }
         if ((event.metaKey || event.ctrlKey) && (lowered === "p" || lowered === "t")) {
           event.preventDefault();
           openSearchPalette();
