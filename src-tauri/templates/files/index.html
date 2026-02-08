@@ -185,6 +185,21 @@
       font-family: "SF Mono", "Menlo", "Consolas", monospace;
     }
 
+    .preview-pdf {
+      width: 100%;
+      min-height: 520px;
+      height: calc(100vh - 180px);
+      border: 1px solid #46506a;
+      border-radius: 8px;
+      background: rgba(17, 22, 32, 0.8);
+    }
+
+    .preview-loading {
+      color: #b8c5dc;
+      font-size: 12px;
+      margin-bottom: 8px;
+    }
+
     .preview-note {
       margin-top: 10px;
       color: #95a1b8;
@@ -472,6 +487,9 @@
       <div class="preview-body">
         {% if preview.kind == "image" and preview.image_data_url %}
           <img class="preview-image" src="{{ preview.image_data_url }}" alt="{{ preview.title }}">
+        {% elif preview.kind == "pdf" and preview.pdf_path %}
+          <div class="preview-loading" id="preview-pdf-status">Loading PDF preview...</div>
+          <iframe class="preview-pdf" data-pdf-path="{{ preview.pdf_path }}" title="{{ preview.title }}" hidden></iframe>
         {% elif preview.kind == "text" and preview.text_head %}
           <pre class="preview-text">{{ preview.text_head }}</pre>
         {% endif %}
@@ -502,6 +520,42 @@
     (() => {
       const root = document.getElementById("main-root");
       if (!root) return;
+      let previewPdfObjectUrl = null;
+      const pdfIframe = root.querySelector(".preview-pdf[data-pdf-path]");
+      if (pdfIframe) {
+        const rawPath = pdfIframe.getAttribute("data-pdf-path") || "";
+        const status = root.querySelector("#preview-pdf-status");
+        const invoke = window.__TAURI__?.core?.invoke;
+        const base64ToBytes = (base64) => {
+          const raw = atob(base64);
+          const bytes = new Uint8Array(raw.length);
+          for (let i = 0; i < raw.length; i += 1) {
+            bytes[i] = raw.charCodeAt(i);
+          }
+          return bytes;
+        };
+        if (rawPath && typeof invoke === "function") {
+          invoke("load_pdf_preview_data", {path: rawPath})
+            .then((base64) => {
+              if (previewPdfObjectUrl) {
+                URL.revokeObjectURL(previewPdfObjectUrl);
+                previewPdfObjectUrl = null;
+              }
+              const bytes = base64ToBytes(base64);
+              const blob = new Blob([bytes], {type: "application/pdf"});
+              previewPdfObjectUrl = URL.createObjectURL(blob);
+              pdfIframe.src = previewPdfObjectUrl;
+              pdfIframe.hidden = false;
+              if (status) status.textContent = "";
+            })
+            .catch((error) => {
+              if (status) status.textContent = String(error || "Failed to load PDF preview.");
+              pdfIframe.hidden = true;
+            });
+        } else if (status) {
+          status.textContent = "Failed to load PDF preview.";
+        }
+      }
       const activeTabId = root.dataset.activeTabId || "default";
       const DEBUG_NAV = true;
       const DEBUG_SCROLL = true;
@@ -1508,6 +1562,10 @@
       root.addEventListener(
         "htmx:beforeCleanupElement",
         () => {
+          if (previewPdfObjectUrl) {
+            URL.revokeObjectURL(previewPdfObjectUrl);
+            previewPdfObjectUrl = null;
+          }
           hideDropHint();
           clearDropTarget();
           if (typeof dragDropUnlisten === "function") {

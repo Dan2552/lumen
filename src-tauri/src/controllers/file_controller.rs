@@ -41,6 +41,7 @@ struct PreviewModel {
     path: String,
     icon: String,
     image_data_url: Option<String>,
+    pdf_path: Option<String>,
     text_head: Option<String>,
     note: Option<String>,
 }
@@ -294,6 +295,7 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
                 path: path.to_string_lossy().to_string(),
                 icon,
                 image_data_url: None,
+                pdf_path: None,
                 text_head: None,
                 note: Some("Image is too large for inline preview.".to_string()),
             });
@@ -308,6 +310,21 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
             path: path.to_string_lossy().to_string(),
             icon,
             image_data_url: Some(data_url),
+            pdf_path: None,
+            text_head: None,
+            note: None,
+        });
+    }
+
+    if ext == "pdf" {
+        return Some(PreviewModel {
+            kind: "pdf".to_string(),
+            title: file_name,
+            subtitle,
+            path: path.to_string_lossy().to_string(),
+            icon,
+            image_data_url: None,
+            pdf_path: Some(path.to_string_lossy().to_string()),
             text_head: None,
             note: None,
         });
@@ -327,6 +344,7 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
             path: path.to_string_lossy().to_string(),
             icon,
             image_data_url: None,
+            pdf_path: None,
             text_head: Some(text),
             note: Some("Showing the first 16KB.".to_string()),
         });
@@ -339,6 +357,7 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
         path: path.to_string_lossy().to_string(),
         icon,
         image_data_url: None,
+        pdf_path: None,
         text_head: None,
         note: Some("No preview available for this file type yet.".to_string()),
     })
@@ -1252,6 +1271,34 @@ fn open_path_with_application(app_name: &str, path: &Path) -> Result<(), String>
     } else {
         Err(format!("failed to launch {app_name}"))
     }
+}
+
+#[tauri::command]
+pub async fn load_pdf_preview_data(path: String) -> Result<String, String> {
+    let home = home_directory();
+    let target = resolve_home_scoped_path(&home, &path)?;
+    if !target.is_file() {
+        return Err("path is not a file".to_string());
+    }
+    let ext = target
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+    if ext != "pdf" {
+        return Err("path is not a pdf".to_string());
+    }
+
+    const MAX_PDF_PREVIEW_BYTES: u64 = 100 * 1024 * 1024;
+    let metadata = fs::metadata(&target).map_err(|error| error.to_string())?;
+    if metadata.len() > MAX_PDF_PREVIEW_BYTES {
+        return Err("PDF is too large for inline preview.".to_string());
+    }
+
+    let bytes = tokio::fs::read(&target)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(STANDARD.encode(bytes))
 }
 
 #[tauri::command]
