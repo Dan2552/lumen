@@ -4,9 +4,9 @@ mod controllers {
     pub mod file_controller;
 }
 use controllers::file_controller;
+use serde::Serialize;
 use std::collections::BTreeSet;
 use std::sync::Mutex;
-use serde::Serialize;
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, Position, State, WebviewUrl,
     WebviewWindowBuilder,
@@ -66,7 +66,11 @@ fn ensure_hold_window(app: &AppHandle) -> Result<(), tauri::Error> {
 
 fn should_show_hold_window(app: &AppHandle) -> bool {
     let state = app.state::<HoldState>();
-    let has_items = state.paths.lock().map(|paths| !paths.is_empty()).unwrap_or(false);
+    let has_items = state
+        .paths
+        .lock()
+        .map(|paths| !paths.is_empty())
+        .unwrap_or(false);
     let has_drag_hover = state
         .dragging_window_labels
         .lock()
@@ -105,7 +109,11 @@ fn is_alt_pressed() -> bool {
 
 #[tauri::command]
 fn hold_get_items(state: State<'_, HoldState>) -> Vec<String> {
-    state.paths.lock().map(|paths| paths.clone()).unwrap_or_default()
+    state
+        .paths
+        .lock()
+        .map(|paths| paths.clone())
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -197,21 +205,26 @@ pub fn run() {
         .on_menu_event(|app, event| {
             let path_to_copy = {
                 let state = app.state::<file_controller::FileContextMenuState>();
-                state.pending.lock().ok().and_then(|pending| pending.clone())
+                state
+                    .pending
+                    .lock()
+                    .ok()
+                    .and_then(|pending| pending.clone())
             };
             let Some(pending) = path_to_copy else {
                 return;
             };
-            let path = pending.path;
-            let relative_path = pending.relative_path;
+            let absolute_paths = pending.paths;
+            let relative_paths = pending.relative_paths;
+            let first_path = absolute_paths.first().cloned().unwrap_or_default();
 
             let menu_id = event.id().as_ref();
             if menu_id == "copy_absolute_path" {
-                let _ = app.clipboard().write_text(path);
+                let _ = app.clipboard().write_text(absolute_paths.join("\n"));
                 return;
             }
             if menu_id == "copy_relative_path" {
-                let _ = app.clipboard().write_text(relative_path);
+                let _ = app.clipboard().write_text(relative_paths.join("\n"));
                 return;
             }
 
@@ -245,7 +258,7 @@ pub fn run() {
                     "files-context-action",
                     FilesContextActionEvent {
                         action: action.to_string(),
-                        path,
+                        path: first_path,
                     },
                 );
                 return;
@@ -270,7 +283,9 @@ pub fn run() {
             file_controller::show_file_context_menu,
             file_controller::rename_path,
             file_controller::trash_path,
+            file_controller::trash_paths,
             file_controller::delete_path,
+            file_controller::delete_paths,
             file_controller::create_directory,
             file_controller::create_file,
             file_controller::set_directory_sort,

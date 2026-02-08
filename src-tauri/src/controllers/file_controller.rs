@@ -1,17 +1,17 @@
+use base64::{engine::general_purpose::STANDARD, Engine};
+use flate2::read::GzDecoder;
 use serde::Serialize;
 use std::{
-    collections::{BTreeMap, HashMap, hash_map::DefaultHasher},
+    collections::{hash_map::DefaultHasher, BTreeMap, BTreeSet, HashMap},
     env, fs,
     hash::{Hash, Hasher},
-    io::{ErrorKind, Write},
     io::Read,
+    io::{ErrorKind, Write},
     path::{Path, PathBuf},
     process::Command,
     sync::{Arc, Mutex},
     time::UNIX_EPOCH,
 };
-use base64::{engine::general_purpose::STANDARD, Engine};
-use flate2::read::GzDecoder;
 use tauri::{
     menu::MenuBuilder, AppHandle, LogicalPosition, Manager, PhysicalPosition, PhysicalSize,
     Runtime, State, Window,
@@ -108,8 +108,7 @@ impl Default for FileSearchState {
     }
 }
 
-#[derive(Debug, Clone)]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct TabState {
     id: u64,
     #[serde(default)]
@@ -120,8 +119,7 @@ struct TabState {
     show_hidden: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum DirectorySortMode {
     Alphabetical,
@@ -144,8 +142,7 @@ impl DirectorySortMode {
     }
 }
 
-#[derive(Debug)]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct TabsModel {
     #[serde(default)]
     tabs: Vec<TabState>,
@@ -159,8 +156,7 @@ struct TabsModel {
     window: Option<WindowGeometry>,
 }
 
-#[derive(Debug, Clone)]
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct WindowGeometry {
     x: i32,
     y: i32,
@@ -183,7 +179,11 @@ struct SortableEntry {
     entry: FileEntry,
 }
 
-fn list_directory(path: &PathBuf, sort_mode: DirectorySortMode, show_hidden: bool) -> Vec<FileEntry> {
+fn list_directory(
+    path: &PathBuf,
+    sort_mode: DirectorySortMode,
+    show_hidden: bool,
+) -> Vec<FileEntry> {
     let Ok(entries) = fs::read_dir(path) else {
         return Vec::new();
     };
@@ -427,7 +427,10 @@ fn decode_blend_test_payload(data: &[u8], little_endian: bool) -> Vec<Vec<u8>> {
     previews
 }
 
-fn extract_blend_preview_from_bytes_with_mode(bytes: &[u8], align_blocks_to_4: bool) -> Vec<Vec<u8>> {
+fn extract_blend_preview_from_bytes_with_mode(
+    bytes: &[u8],
+    align_blocks_to_4: bool,
+) -> Vec<Vec<u8>> {
     const MAX_BLEND_PREVIEWS: usize = 24;
     let mut previews = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -690,9 +693,13 @@ fn inline_gltf_sidecars(home: &Path, gltf_path: &Path) -> Result<Vec<u8>, String
         .parent()
         .ok_or_else(|| "gltf has no parent directory".to_string())?;
     let raw = fs::read_to_string(gltf_path).map_err(|error| error.to_string())?;
-    let mut gltf: serde_json::Value = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+    let mut gltf: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|error| error.to_string())?;
 
-    if let Some(buffers) = gltf.get_mut("buffers").and_then(|value| value.as_array_mut()) {
+    if let Some(buffers) = gltf
+        .get_mut("buffers")
+        .and_then(|value| value.as_array_mut())
+    {
         for buffer in buffers {
             let Some(uri_value) = buffer.get_mut("uri") else {
                 continue;
@@ -704,17 +711,23 @@ fn inline_gltf_sidecars(home: &Path, gltf_path: &Path) -> Result<Vec<u8>, String
                 continue;
             }
             let source_path = parent.join(uri);
-            let canonical = source_path.canonicalize().map_err(|error| error.to_string())?;
+            let canonical = source_path
+                .canonicalize()
+                .map_err(|error| error.to_string())?;
             if !canonical.starts_with(home) {
                 return Err("gltf sidecar is outside allowed root".to_string());
             }
             let bytes = fs::read(&canonical).map_err(|error| error.to_string())?;
             let mime = mime_type_for_sidecar(&canonical);
-            *uri_value = serde_json::Value::String(format!("data:{mime};base64,{}", STANDARD.encode(bytes)));
+            *uri_value =
+                serde_json::Value::String(format!("data:{mime};base64,{}", STANDARD.encode(bytes)));
         }
     }
 
-    if let Some(images) = gltf.get_mut("images").and_then(|value| value.as_array_mut()) {
+    if let Some(images) = gltf
+        .get_mut("images")
+        .and_then(|value| value.as_array_mut())
+    {
         for image in images {
             let Some(uri_value) = image.get_mut("uri") else {
                 continue;
@@ -726,13 +739,16 @@ fn inline_gltf_sidecars(home: &Path, gltf_path: &Path) -> Result<Vec<u8>, String
                 continue;
             }
             let source_path = parent.join(uri);
-            let canonical = source_path.canonicalize().map_err(|error| error.to_string())?;
+            let canonical = source_path
+                .canonicalize()
+                .map_err(|error| error.to_string())?;
             if !canonical.starts_with(home) {
                 return Err("gltf sidecar is outside allowed root".to_string());
             }
             let bytes = fs::read(&canonical).map_err(|error| error.to_string())?;
             let mime = mime_type_for_sidecar(&canonical);
-            *uri_value = serde_json::Value::String(format!("data:{mime};base64,{}", STANDARD.encode(bytes)));
+            *uri_value =
+                serde_json::Value::String(format!("data:{mime};base64,{}", STANDARD.encode(bytes)));
         }
     }
 
@@ -899,13 +915,13 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
                 path: path.to_string_lossy().to_string(),
                 icon,
                 image_data_url: first,
-            affinity_image_data_urls: Some(std::mem::take(&mut data_urls)),
-            pdf_path: None,
-            glb_path: None,
-            video_path: None,
-            text_head: None,
-            note: Some("Embedded Affinity thumbnails.".to_string()),
-        });
+                affinity_image_data_urls: Some(std::mem::take(&mut data_urls)),
+                pdf_path: None,
+                glb_path: None,
+                video_path: None,
+                text_head: None,
+                note: Some("Embedded Affinity thumbnails.".to_string()),
+            });
         }
         return Some(PreviewModel {
             kind: "unknown".to_string(),
@@ -1084,7 +1100,9 @@ fn components_under_home(home: &Path, focus: &Path) -> Vec<String> {
 }
 
 fn is_directory(path: &Path) -> bool {
-    fs::metadata(path).map(|meta| meta.is_dir()).unwrap_or(false)
+    fs::metadata(path)
+        .map(|meta| meta.is_dir())
+        .unwrap_or(false)
 }
 
 fn has_hidden_component_between(root: &Path, target: &Path) -> bool {
@@ -1354,7 +1372,12 @@ fn remove_permanently(path: &Path) -> Result<(), String> {
     }
 }
 
-fn set_active_focus_after_path_change(model: &mut TabsModel, home: &Path, preferred: Option<&Path>, source: &Path) {
+fn set_active_focus_after_path_change(
+    model: &mut TabsModel,
+    home: &Path,
+    preferred: Option<&Path>,
+    source: &Path,
+) {
     let fallback = source.parent().unwrap_or(home);
     let next = preferred.filter(|path| path.exists()).unwrap_or(fallback);
     let normalized = normalize_tab_path(home, Some(&next.to_string_lossy()));
@@ -1477,7 +1500,11 @@ fn relative_path_from_root(path: &Path, root: &Path) -> String {
         .ok()
         .map(|relative| {
             let value = relative.to_string_lossy().to_string();
-            if value.is_empty() { ".".to_string() } else { value }
+            if value.is_empty() {
+                ".".to_string()
+            } else {
+                value
+            }
         })
         .unwrap_or_else(|| path.to_string_lossy().to_string())
 }
@@ -1509,7 +1536,12 @@ fn fuzzy_score(haystack: &str, needle: &str) -> Option<i64> {
                 let gap = (index - last - 1) as i64;
                 score -= gap.min(12);
             }
-        } else if index == 0 || matches!(hay_chars.get(index.saturating_sub(1)), Some('/' | '_' | '-' | ' ' | '.')) {
+        } else if index == 0
+            || matches!(
+                hay_chars.get(index.saturating_sub(1)),
+                Some('/' | '_' | '-' | ' ' | '.')
+            )
+        {
             score += 18;
         }
         last_index = Some(index);
@@ -1527,14 +1559,23 @@ fn push_ranked_result(
 ) {
     ranked.push((score, item));
     if ranked.len() > max_results * 4 {
-        ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.relative_path.cmp(&b.1.relative_path)));
+        ranked.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then_with(|| a.1.relative_path.cmp(&b.1.relative_path))
+        });
         ranked.truncate(max_results);
     }
 }
 
-fn sorted_ranked_results(ranked: &[(i64, SearchResultItem)], max_results: usize) -> Vec<SearchResultItem> {
+fn sorted_ranked_results(
+    ranked: &[(i64, SearchResultItem)],
+    max_results: usize,
+) -> Vec<SearchResultItem> {
     let mut items = ranked.to_vec();
-    items.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.relative_path.cmp(&b.1.relative_path)));
+    items.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| a.1.relative_path.cmp(&b.1.relative_path))
+    });
     items.truncate(max_results);
     items.into_iter().map(|(_, item)| item).collect()
 }
@@ -1790,8 +1831,8 @@ pub struct FileContextMenuState {
 
 #[derive(Debug, Clone)]
 pub struct PendingContextTarget {
-    pub path: String,
-    pub relative_path: String,
+    pub paths: Vec<String>,
+    pub relative_paths: Vec<String>,
 }
 
 impl Default for FileContextMenuState {
@@ -2028,6 +2069,8 @@ pub fn show_file_context_menu(
     tabs_state: State<'_, FileTabsState>,
     path: String,
     is_dir: bool,
+    selection_count: usize,
+    selected_paths: Option<Vec<String>>,
     x: f64,
     y: f64,
 ) -> Result<(), String> {
@@ -2047,21 +2090,52 @@ pub fn show_file_context_menu(
     drop(model);
 
     let path_buf = PathBuf::from(&path);
-    let relative_path = relative_path_from_root(&path_buf, &root);
+    let is_multi_selection = selection_count > 1;
     let show_default_open = should_show_default_open_for_file(&path_buf);
-    let show_github_desktop = is_dir && resolve_github_desktop_repo_for_path(&path_buf, &root).is_some();
+    let show_github_desktop =
+        is_dir && resolve_github_desktop_repo_for_path(&path_buf, &root).is_some();
+
+    let mut paths = if is_multi_selection {
+        selected_paths.unwrap_or_default()
+    } else {
+        vec![path.clone()]
+    };
+    paths.retain(|value| !value.trim().is_empty());
+    if paths.is_empty() {
+        paths.push(path.clone());
+    }
+    if !paths.iter().any(|value| value == &path) {
+        paths.insert(0, path.clone());
+    }
+    let relative_paths = paths
+        .iter()
+        .map(|value| relative_path_from_root(&PathBuf::from(value), &root))
+        .collect::<Vec<_>>();
 
     let mut pending = state
         .pending
         .lock()
         .map_err(|_| "failed to lock context menu state".to_string())?;
     *pending = Some(PendingContextTarget {
-        path,
-        relative_path,
+        paths,
+        relative_paths,
     });
     drop(pending);
 
     let mut builder = MenuBuilder::new(&window);
+    if is_multi_selection {
+        let menu = builder
+            .text("copy_absolute_path", "Copy absolute path")
+            .text("copy_relative_path", "Copy relative path")
+            .separator()
+            .text("ctx_trash", "Trash")
+            .text("ctx_delete", "Delete")
+            .build()
+            .map_err(|error| error.to_string())?;
+        return window
+            .popup_menu_at(&menu, LogicalPosition::new(x, y))
+            .map_err(|error| error.to_string());
+    }
     if is_dir {
         builder = builder
             .text("ctx_new_dir", "Create directory")
@@ -2155,6 +2229,44 @@ pub fn trash_path(state: State<'_, FileTabsState>, path: String) -> Result<Strin
     Ok(render_view(&model))
 }
 
+fn parse_paths_json_arg(paths_json: &str) -> Result<Vec<String>, String> {
+    let parsed: Vec<String> =
+        serde_json::from_str(paths_json).map_err(|_| "invalid paths payload".to_string())?;
+    let mut unique = BTreeSet::new();
+    for path in parsed {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            unique.insert(trimmed.to_string());
+        }
+    }
+    Ok(unique.into_iter().collect())
+}
+
+#[tauri::command]
+pub fn trash_paths(state: State<'_, FileTabsState>, paths_json: String) -> Result<String, String> {
+    let home = home_directory();
+    let mut model = state
+        .tabs
+        .lock()
+        .map_err(|_| "failed to lock tabs state".to_string())?;
+    ensure_tabs(&mut model, &home);
+
+    let paths = parse_paths_json_arg(&paths_json)?;
+    for path in &paths {
+        let source = resolve_home_scoped_path(&home, path)?;
+        if source == home {
+            return Err("cannot trash root directory".to_string());
+        }
+        if !source.exists() {
+            return Err("path does not exist".to_string());
+        }
+        move_to_trash(&source)?;
+        set_active_focus_after_path_change(&mut model, &home, None, &source);
+    }
+    persist_tabs_model(&model);
+    Ok(render_view(&model))
+}
+
 #[tauri::command]
 pub fn delete_path(state: State<'_, FileTabsState>, path: String) -> Result<String, String> {
     let home = home_directory();
@@ -2173,6 +2285,31 @@ pub fn delete_path(state: State<'_, FileTabsState>, path: String) -> Result<Stri
     }
     remove_permanently(&source)?;
     set_active_focus_after_path_change(&mut model, &home, None, &source);
+    persist_tabs_model(&model);
+    Ok(render_view(&model))
+}
+
+#[tauri::command]
+pub fn delete_paths(state: State<'_, FileTabsState>, paths_json: String) -> Result<String, String> {
+    let home = home_directory();
+    let mut model = state
+        .tabs
+        .lock()
+        .map_err(|_| "failed to lock tabs state".to_string())?;
+    ensure_tabs(&mut model, &home);
+
+    let paths = parse_paths_json_arg(&paths_json)?;
+    for path in &paths {
+        let source = resolve_home_scoped_path(&home, path)?;
+        if source == home {
+            return Err("cannot delete root directory".to_string());
+        }
+        if !source.exists() {
+            return Err("path does not exist".to_string());
+        }
+        remove_permanently(&source)?;
+        set_active_focus_after_path_change(&mut model, &home, None, &source);
+    }
     persist_tabs_model(&model);
     Ok(render_view(&model))
 }
@@ -2629,6 +2766,7 @@ pub fn path_context_capabilities(
     Ok(PathContextCapabilities {
         is_dir,
         show_default_open: !is_dir && should_show_default_open_for_file(&target),
-        show_github_desktop: is_dir && resolve_github_desktop_repo_for_path(&target, &tab_root).is_some(),
+        show_github_desktop: is_dir
+            && resolve_github_desktop_repo_for_path(&target, &tab_root).is_some(),
     })
 }

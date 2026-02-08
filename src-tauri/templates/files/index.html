@@ -1219,7 +1219,9 @@
         pendingRightFromPath: window.__filesPendingRightFromPath || null,
       });
 
-      const selectedRows = rows.filter((row) => row.classList.contains("is-selected"));
+      window.__filesSelectionByTab = window.__filesSelectionByTab || {};
+      window.__filesSelectionAnchorByTab = window.__filesSelectionAnchorByTab || {};
+      window.__filesPendingContextSelectionByTab = window.__filesPendingContextSelectionByTab || {};
       const rowsByColumn = new Map();
 
       for (const row of rows) {
@@ -1228,10 +1230,41 @@
         rowsByColumn.get(column).push(row);
       }
 
+      const selectedRows = () => rows.filter((row) => row.classList.contains("is-selected"));
+      const selectedPaths = () => selectedRows().map((row) => row.dataset.path || "").filter((value) => !!value);
+      const rowByPath = (path) => rows.find((row) => row.dataset.path === path) || null;
+      const setSelectionAnchorPath = (path) => {
+        if (!path) {
+          delete window.__filesSelectionAnchorByTab[activeTabId];
+          return;
+        }
+        window.__filesSelectionAnchorByTab[activeTabId] = path;
+      };
+      const getSelectionAnchorPath = () => window.__filesSelectionAnchorByTab[activeTabId] || null;
+      const persistSelection = () => {
+        window.__filesSelectionByTab[activeTabId] = selectedPaths();
+      };
+      const setPendingContextSelectionPaths = (paths) => {
+        const normalized = Array.from(
+          new Set((Array.isArray(paths) ? paths : []).map((value) => String(value || "")).filter((value) => !!value)),
+        );
+        if (normalized.length === 0) {
+          delete window.__filesPendingContextSelectionByTab[activeTabId];
+          return;
+        }
+        window.__filesPendingContextSelectionByTab[activeTabId] = normalized;
+      };
+      const consumePendingContextSelectionPaths = () => {
+        const paths = Array.isArray(window.__filesPendingContextSelectionByTab[activeTabId])
+          ? window.__filesPendingContextSelectionByTab[activeTabId]
+          : [];
+        delete window.__filesPendingContextSelectionByTab[activeTabId];
+        return paths;
+      };
       const rightmostSelected = () =>
-        [...selectedRows].sort((a, b) => Number(a.dataset.column) - Number(b.dataset.column)).at(-1);
+        [...selectedRows()].sort((a, b) => Number(a.dataset.column) - Number(b.dataset.column)).at(-1);
       const selectedInColumn = (columnIndex) =>
-        selectedRows.find((row) => Number(row.dataset.column) === columnIndex) || null;
+        selectedRows().find((row) => Number(row.dataset.column) === columnIndex) || null;
       const focusedRow = () =>
         (root.contains(document.activeElement) && document.activeElement.classList.contains("finder-row")
           ? document.activeElement
@@ -1333,13 +1366,100 @@
           body.scrollTop = next;
         }
       };
-      const setRowSelectedLocally = (row) => {
-        const columnIndex = Number(row.dataset.column || 0);
-        const columnRows = rowsByColumn.get(columnIndex) || [];
-        for (const candidate of columnRows) {
-          candidate.classList.remove("is-selected");
+      const setSelectionByPaths = (paths, options = {}) => {
+        const selectedSet = new Set(
+          (Array.isArray(paths) ? paths : []).map((value) => String(value || "")).filter((value) => !!value),
+        );
+        for (const row of rows) {
+          row.classList.toggle("is-selected", selectedSet.has(row.dataset.path || ""));
         }
-        row.classList.add("is-selected");
+        persistSelection();
+        if (options.anchorPath !== undefined) {
+          setSelectionAnchorPath(options.anchorPath);
+        }
+      };
+      const setSingleSelection = (row) => {
+        if (!row) return;
+        const path = row.dataset.path || "";
+        if (!path) return;
+        setSelectionByPaths([path], {anchorPath: path});
+      };
+      const toggleRowSelectedLocally = (row) => {
+        if (!row) return;
+        const path = row.dataset.path || "";
+        if (!path) return;
+        const current = new Set(selectedPaths());
+        if (current.has(path)) {
+          current.delete(path);
+        } else {
+          current.add(path);
+        }
+        const next = Array.from(current);
+        if (next.length === 0) {
+          setSingleSelection(row);
+          return;
+        }
+        setSelectionByPaths(next, {anchorPath: path});
+      };
+      const selectRangeToRow = (targetRow, additive = false) => {
+        if (!targetRow) return;
+        const targetPath = targetRow.dataset.path || "";
+        if (!targetPath) return;
+        const targetColumn = Number(targetRow.dataset.column || 0);
+        const anchorRow =
+          rowByPath(getSelectionAnchorPath()) ||
+          focusedRow() ||
+          selectedInColumn(targetColumn) ||
+          targetRow;
+        const anchorColumn = Number(anchorRow?.dataset?.column || targetColumn);
+        if (anchorColumn !== targetColumn) {
+          setSingleSelection(targetRow);
+          return;
+        }
+        const columnRows = rowsByColumn.get(targetColumn) || [];
+        const start = columnRows.findIndex((row) => row.dataset.path === (anchorRow?.dataset?.path || ""));
+        const end = columnRows.findIndex((row) => row.dataset.path === targetPath);
+        if (start < 0 || end < 0) {
+          setSingleSelection(targetRow);
+          return;
+        }
+        const low = Math.min(start, end);
+        const high = Math.max(start, end);
+        const rangePaths = columnRows.slice(low, high + 1).map((row) => row.dataset.path || "").filter((value) => !!value);
+        const nextPaths = additive ? Array.from(new Set([...selectedPaths(), ...rangePaths])) : rangePaths;
+        setSelectionByPaths(nextPaths, {anchorPath: anchorRow?.dataset?.path || targetPath});
+      };
+      const restoreSelectionFromMemory = () => {
+        const remembered = Array.isArray(window.__filesSelectionByTab[activeTabId])
+          ? window.__filesSelectionByTab[activeTabId]
+          : [];
+        const rememberedRows = remembered.map((path) => rowByPath(path)).filter((row) => !!row);
+        if (rememberedRows.length > 0) {
+          setSelectionByPaths(rememberedRows.map((row) => row.dataset.path || ""));
+          if (!rowByPath(getSelectionAnchorPath())) {
+            setSelectionAnchorPath(rememberedRows[0].dataset.path || null);
+          }
+          return;
+        }
+        const initial = rows.filter((row) => row.classList.contains("is-selected"));
+        if (initial.length > 0) {
+          setSelectionByPaths(initial.map((row) => row.dataset.path || ""));
+          if (!rowByPath(getSelectionAnchorPath())) {
+            setSelectionAnchorPath(initial[0].dataset.path || null);
+          }
+          return;
+        }
+        setSelectionByPaths([]);
+        setSelectionAnchorPath(null);
+      };
+      const selectedPathsForContext = (path) => {
+        const normalizedPath = String(path || "");
+        if (!normalizedPath) return [];
+        const selected = selectedPaths();
+        if (selected.includes(normalizedPath)) {
+          return selected;
+        }
+        return [normalizedPath];
       };
       const clearDropTarget = () => {
         if (dropTargetRow) {
@@ -1652,27 +1772,33 @@
         dragIconCache.set(key, bytes);
         return bytes;
       };
-      const startPluginDrag = (path, name, isDir, event) => {
+      const startPluginDrag = (paths, name, isDir, event) => {
         const startDrag = window.__TAURI__?.drag?.startDrag;
         if (typeof startDrag !== "function") return false;
+        const normalizedPaths = Array.from(
+          new Set((Array.isArray(paths) ? paths : [paths]).map((value) => String(value || "")).filter((value) => !!value)),
+        );
+        if (normalizedPaths.length === 0) return false;
         event.preventDefault();
         optionPressed = !!event.altKey;
         const icon = makeRowDragIcon(name || "item", isDir) || [];
         startDrag({
-          item: [path],
+          item: normalizedPaths,
           icon,
         })
           .then(() => {
-            logNav("plugin dragstart", {path});
+            logNav("plugin dragstart", {count: normalizedPaths.length});
           })
           .catch((error) => {
-            logNav("plugin dragstart failed", {path, error: String(error)});
+            logNav("plugin dragstart failed", {count: normalizedPaths.length, error: String(error)});
           })
           .finally(() => {
             dragInProgress = false;
           });
         return true;
       };
+
+      restoreSelectionFromMemory();
 
       let initialFromRight = null;
       let shouldCommitInitialFromRight = false;
@@ -1722,7 +1848,7 @@
         ensureRowVisible(initialRow);
         ensureColumnAndNextVisible(initialColumnIndex);
         if (shouldCommitInitialFromRight) {
-          setRowSelectedLocally(initialRow);
+          setSingleSelection(initialRow);
           setTimeout(() => {
             if (document.body.contains(initialRow)) {
               const path = initialRow.dataset.path;
@@ -1741,26 +1867,14 @@
         }
       }
 
-      const pendingContextMenu = window.__filesPendingContextMenu;
-      if (pendingContextMenu) {
-        window.__filesPendingContextMenu = null;
-        const invoke = window.__TAURI__?.core?.invoke;
-        if (typeof invoke === "function") {
-          invoke("show_file_context_menu", {
-            path: pendingContextMenu.path,
-            isDir: !!pendingContextMenu.isDir,
-            x: pendingContextMenu.x,
-            y: pendingContextMenu.y,
-          }).catch(() => {});
-        }
-      }
-
       const showContextMenu = (payload) => {
         const invoke = window.__TAURI__?.core?.invoke;
         if (typeof invoke !== "function") return;
         invoke("show_file_context_menu", {
           path: payload.path,
           isDir: !!payload.isDir,
+          selectionCount: Number(payload.selectionCount || 1),
+          selectedPaths: Array.isArray(payload.selectedPaths) ? payload.selectedPaths : null,
           x: payload.x,
           y: payload.y,
         }).catch(() => {});
@@ -1775,73 +1889,89 @@
       const isSearchOpen = () => !!searchRoot && !searchRoot.hidden;
       const isGotoOpen = () => !!gotoModal && !gotoModal.hidden;
       const isCommandOpen = () => !!commandModal && !commandModal.hidden;
-      const runContextAction = async (action, path) => {
-        if (!action || !path) return;
-        logNav("context action", {action, path});
-        const name = path.split("/").filter(Boolean).at(-1) || path;
+      const runContextAction = async (action, pathOrPaths) => {
+        if (!action) return;
+        const targetPaths = Array.from(
+          new Set(
+            (Array.isArray(pathOrPaths) ? pathOrPaths : [pathOrPaths])
+              .map((value) => String(value || ""))
+              .filter((value) => !!value),
+          ),
+        );
+        if (targetPaths.length === 0) return;
+        const firstPath = targetPaths[0];
+        const name = firstPath.split("/").filter(Boolean).at(-1) || firstPath;
+        const count = targetPaths.length;
         const normalized = String(action).toLowerCase();
+        logNav("context action", {action, targetPaths});
         if (normalized.includes("open_default")) {
-          logNav("context open default", {path});
           if (typeof invoke === "function") {
-            invoke("open_in_default", {path}).catch((error) => {
-              logNav("open_in_default failed", {path, error: String(error)});
-            });
+            for (const path of targetPaths) {
+              invoke("open_in_default", {path}).catch((error) => {
+                logNav("open_in_default failed", {path, error: String(error)});
+              });
+            }
           }
           return;
         }
         if (normalized.includes("open_zed")) {
-          logNav("context open zed", {path});
           if (typeof invoke === "function") {
-            invoke("open_in_zed", {path}).catch((error) => {
-              logNav("open_in_zed failed", {path, error: String(error)});
-            });
+            for (const path of targetPaths) {
+              invoke("open_in_zed", {path}).catch((error) => {
+                logNav("open_in_zed failed", {path, error: String(error)});
+              });
+            }
           }
           return;
         }
         if (normalized.includes("open_warp")) {
-          logNav("context open warp", {path});
           if (typeof invoke === "function") {
-            invoke("open_in_warp", {path}).catch((error) => {
-              logNav("open_in_warp failed", {path, error: String(error)});
-            });
+            for (const path of targetPaths) {
+              invoke("open_in_warp", {path}).catch((error) => {
+                logNav("open_in_warp failed", {path, error: String(error)});
+              });
+            }
           }
           return;
         }
         if (normalized.includes("open_finder")) {
-          logNav("context open finder", {path});
           if (typeof invoke === "function") {
-            invoke("open_in_finder", {path}).catch((error) => {
-              logNav("open_in_finder failed", {path, error: String(error)});
-            });
+            for (const path of targetPaths) {
+              invoke("open_in_finder", {path}).catch((error) => {
+                logNav("open_in_finder failed", {path, error: String(error)});
+              });
+            }
           }
           return;
         }
         if (normalized.includes("open_github_desktop")) {
-          logNav("context open github desktop", {path});
           if (typeof invoke === "function") {
-            invoke("open_in_github_desktop", {path}).catch((error) => {
-              logNav("open_in_github_desktop failed", {path, error: String(error)});
-            });
+            for (const path of targetPaths) {
+              invoke("open_in_github_desktop", {path}).catch((error) => {
+                logNav("open_in_github_desktop failed", {path, error: String(error)});
+              });
+            }
           }
           return;
         }
         if (normalized.includes("set_tab_root")) {
-          logNav("context set tab root", {path});
-          htmxCommandSwap("set_tab_root", {path});
+          htmxCommandSwap("set_tab_root", {path: firstPath});
           return;
         }
         if (normalized.includes("copy_absolute_path")) {
           const writeText = navigator.clipboard?.writeText?.bind(navigator.clipboard);
           if (typeof writeText === "function") {
-            writeText(path).catch((error) => logNav("copy absolute failed", {path, error: String(error)}));
+            writeText(targetPaths.join("\n")).catch((error) =>
+              logNav("copy absolute failed", {targetPaths, error: String(error)}),
+            );
           }
           return;
         }
         if (normalized.includes("copy_relative_path")) {
           const writeText = navigator.clipboard?.writeText?.bind(navigator.clipboard);
-          const value = toRelativePath(path);
+          const value = targetPaths.map((path) => toRelativePath(path)).join("\n");
           if (typeof writeText === "function") {
-            writeText(value).catch((error) => logNav("copy relative failed", {path, error: String(error)}));
+            writeText(value).catch((error) => logNav("copy relative failed", {targetPaths, error: String(error)}));
           }
           return;
         }
@@ -1857,8 +1987,7 @@
           if (!result.confirmed) return;
           const trimmed = String(result.value || "").trim();
           if (!trimmed || trimmed === name) return;
-          logNav("context rename submit", {path, newName: trimmed});
-          htmxCommandSwap("rename_path", {path, newName: trimmed});
+          htmxCommandSwap("rename_path", {path: firstPath, newName: trimmed});
           return;
         }
         if (normalized.includes("new_dir")) {
@@ -1872,8 +2001,7 @@
           if (!result.confirmed) return;
           const trimmed = String(result.value || "").trim();
           if (!trimmed) return;
-          logNav("context create dir", {path, name: trimmed});
-          htmxCommandSwap("create_directory", {parentPath: path, name: trimmed});
+          htmxCommandSwap("create_directory", {parentPath: firstPath, name: trimmed});
           return;
         }
         if (normalized.includes("new_file")) {
@@ -1887,32 +2015,45 @@
           if (!result.confirmed) return;
           const trimmed = String(result.value || "").trim();
           if (!trimmed) return;
-          logNav("context create file", {path, name: trimmed});
-          htmxCommandSwap("create_file", {parentPath: path, name: trimmed});
+          htmxCommandSwap("create_file", {parentPath: firstPath, name: trimmed});
           return;
         }
         if (normalized.includes("trash")) {
+          const message =
+            count === 1
+              ? `Move "${name}" to Trash?`
+              : `Move ${count} selected items to Trash?`;
           const result = await openFilesModal({
             title: "Move to Trash",
-            message: `Move "${name}" to Trash?`,
+            message,
             confirmLabel: "Trash",
             kind: "confirm",
           });
           if (!result.confirmed) return;
-          logNav("context trash confirm", {path});
-          htmxCommandSwap("trash_path", {path});
+          if (count === 1) {
+            htmxCommandSwap("trash_path", {path: firstPath});
+            return;
+          }
+          htmxCommandSwap("trash_paths", {pathsJson: JSON.stringify(targetPaths)});
           return;
         }
         if (normalized.includes("delete")) {
+          const message =
+            count === 1
+              ? `Delete "${name}" permanently?\nThis cannot be undone.`
+              : `Delete ${count} selected items permanently?\nThis cannot be undone.`;
           const result = await openFilesModal({
             title: "Delete Permanently",
-            message: `Delete "${name}" permanently?\nThis cannot be undone.`,
+            message,
             confirmLabel: "Delete",
             kind: "danger",
           });
           if (!result.confirmed) return;
-          logNav("context delete confirm", {path});
-          htmxCommandSwap("delete_path", {path});
+          if (count === 1) {
+            htmxCommandSwap("delete_path", {path: firstPath});
+            return;
+          }
+          htmxCommandSwap("delete_paths", {pathsJson: JSON.stringify(targetPaths)});
         }
       };
       const setSearchStatus = (message) => {
@@ -2079,7 +2220,7 @@
             const row = rows.find((candidate) => candidate.dataset.path === path) || null;
             if (row) {
               setFocusPath(path);
-              setRowSelectedLocally(row);
+              setSingleSelection(row);
               setActiveColumn(Number(row.dataset.column || 0));
             }
           }
@@ -2260,6 +2401,9 @@
         const items = [];
         const currentPath = current?.dataset?.path || "";
         const isDir = (current?.dataset?.isDir || "") === "true";
+        const selected = selectedPaths();
+        const actionPaths = currentPath && selected.includes(currentPath) ? selected : currentPath ? [currentPath] : [];
+        const hasMultiSelection = actionPaths.length > 1;
         if (rootPath) {
           maybeLoadCommandCapabilities(rootPath, true);
         }
@@ -2331,6 +2475,7 @@
 
         if (currentPath) {
           const prefix = isDir ? "Directory" : "File";
+          const selectionPrefix = hasMultiSelection ? `Selection (${actionPaths.length} items)` : prefix;
           if (isDir) {
             items.push({
               label: "Directory: Create directory",
@@ -2356,34 +2501,8 @@
                 runContextAction("set_tab_root", currentPath);
               },
             });
-            items.push({
-              label: "Directory: Open in Finder",
-              hint: "",
-              run: () => {
-                closeCommandModal();
-                runContextAction("open_finder", currentPath);
-              },
-            });
-            items.push({
-              label: "Directory: Open in Warp",
-              hint: "",
-              run: () => {
-                closeCommandModal();
-                runContextAction("open_warp", currentPath);
-              },
-            });
-            if (capabilities.show_github_desktop) {
-              items.push({
-                label: "Selected Directory: Open in GitHub Desktop",
-                hint: "",
-                run: () => {
-                  closeCommandModal();
-                  runContextAction("open_github_desktop", currentPath);
-                },
-              });
-            }
           } else {
-            if (capabilities.show_default_open) {
+            if (capabilities.show_default_open && !hasMultiSelection) {
               items.push({
                 label: "File: Open",
                 hint: "",
@@ -2394,52 +2513,84 @@
               });
             }
           }
+          if (!hasMultiSelection) {
+            items.push({
+              label: `${prefix}: Open in Zed`,
+              hint: "",
+              run: () => {
+                closeCommandModal();
+                runContextAction("open_zed", actionPaths);
+              },
+            });
+            if (isDir) {
+              items.push({
+                label: "Directory: Open in Finder",
+                hint: "",
+                run: () => {
+                  closeCommandModal();
+                  runContextAction("open_finder", actionPaths);
+                },
+              });
+              items.push({
+                label: "Directory: Open in Warp",
+                hint: "",
+                run: () => {
+                  closeCommandModal();
+                  runContextAction("open_warp", actionPaths);
+                },
+              });
+              if (capabilities.show_github_desktop) {
+                items.push({
+                  label: "Selected Directory: Open in GitHub Desktop",
+                  hint: "",
+                  run: () => {
+                    closeCommandModal();
+                    runContextAction("open_github_desktop", actionPaths);
+                  },
+                });
+              }
+            }
+          }
           items.push({
-            label: `${prefix}: Open in Zed`,
+            label: `${selectionPrefix}: Copy absolute path`,
             hint: "",
             run: () => {
               closeCommandModal();
-              runContextAction("open_zed", currentPath);
+              runContextAction("copy_absolute_path", actionPaths);
             },
           });
           items.push({
-            label: `${prefix}: Copy absolute path`,
+            label: `${selectionPrefix}: Copy relative path`,
             hint: "",
             run: () => {
               closeCommandModal();
-              runContextAction("copy_absolute_path", currentPath);
+              runContextAction("copy_relative_path", actionPaths);
+            },
+          });
+          if (!hasMultiSelection) {
+            items.push({
+              label: `${prefix}: Rename`,
+              hint: "",
+              run: () => {
+                closeCommandModal();
+                runContextAction("rename", actionPaths);
+              },
+            });
+          }
+          items.push({
+            label: `${selectionPrefix}: Trash`,
+            hint: "",
+            run: () => {
+              closeCommandModal();
+              runContextAction("trash", actionPaths);
             },
           });
           items.push({
-            label: `${prefix}: Copy relative path`,
+            label: `${selectionPrefix}: Delete`,
             hint: "",
             run: () => {
               closeCommandModal();
-              runContextAction("copy_relative_path", currentPath);
-            },
-          });
-          items.push({
-            label: `${prefix}: Rename`,
-            hint: "",
-            run: () => {
-              closeCommandModal();
-              runContextAction("rename", currentPath);
-            },
-          });
-          items.push({
-            label: `${prefix}: Trash`,
-            hint: "",
-            run: () => {
-              closeCommandModal();
-              runContextAction("trash", currentPath);
-            },
-          });
-          items.push({
-            label: `${prefix}: Delete`,
-            hint: "",
-            run: () => {
-              closeCommandModal();
-              runContextAction("delete", currentPath);
+              runContextAction("delete", actionPaths);
             },
           });
         } else if (currentColumnPath) {
@@ -2705,7 +2856,9 @@
             const action = event?.payload?.action || "";
             const path = event?.payload?.path || "";
             if (!action || !path) return;
-            await runContextAction(action, path);
+            const pendingPaths = consumePendingContextSelectionPaths();
+            const targetPaths = pendingPaths.includes(path) ? pendingPaths : [path];
+            await runContextAction(action, targetPaths);
           }),
         )
           .then((unlisten) => {
@@ -2799,17 +2952,60 @@
         });
       }
 
-      root.addEventListener("click", (event) => {
-        const row = event.target.closest(".finder-row");
+      const focusAndRevealRow = (row) => {
         if (!row) return;
-        if (dragInProgress) return;
-        logNav("row click", {path: row.dataset.path, column: row.dataset.column, isDir: row.dataset.isDir});
         setFocusPath(row.dataset.path);
         row.focus({preventScroll: true});
         const columnIndex = Number(row.dataset.column || 0);
         setActiveColumn(columnIndex);
         ensureRowVisible(row);
         ensureColumnAndNextVisible(columnIndex);
+      };
+      root.addEventListener(
+        "click",
+        (event) => {
+          const row = event.target.closest(".finder-row");
+          if (!row) return;
+          if (dragInProgress) return;
+          const isToggle = !!(event.metaKey || event.ctrlKey);
+          const isRange = !!event.shiftKey;
+          if (!isRange && !isToggle) return;
+          focusAndRevealRow(row);
+          if (isRange) {
+            selectRangeToRow(row, isToggle);
+          } else {
+            toggleRowSelectedLocally(row);
+          }
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        },
+        true,
+      );
+      root.addEventListener("click", (event) => {
+        const row = event.target.closest(".finder-row");
+        if (!row) return;
+        if (dragInProgress) return;
+        const isToggle = !!(event.metaKey || event.ctrlKey);
+        const isRange = !!event.shiftKey;
+        logNav("row click", {
+          path: row.dataset.path,
+          column: row.dataset.column,
+          isDir: row.dataset.isDir,
+          isToggle,
+          isRange,
+        });
+        focusAndRevealRow(row);
+        if (isRange || isToggle) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (isRange) {
+            selectRangeToRow(row, isToggle);
+          } else {
+            toggleRowSelectedLocally(row);
+          }
+          return;
+        }
+        setSingleSelection(row);
       });
 
       root.addEventListener("mousedown", (event) => {
@@ -2827,13 +3023,20 @@
         if (row) {
           event.preventDefault();
           logNav("contextmenu", {path: row.dataset.path, column: row.dataset.column});
-          window.__filesPendingContextMenu = {
+          const contextPaths = selectedPathsForContext(row.dataset.path || "");
+          if (contextPaths.length === 1) {
+            setSingleSelection(row);
+          }
+          focusAndRevealRow(row);
+          setPendingContextSelectionPaths(contextPaths);
+          showContextMenu({
             path: row.dataset.path,
             isDir: row.dataset.isDir === "true",
+            selectionCount: contextPaths.length || 1,
+            selectedPaths: contextPaths,
             x: event.clientX,
             y: event.clientY,
-          };
-          row.click();
+          });
           return;
         }
 
@@ -2843,9 +3046,11 @@
         const path = header.dataset.path || "";
         if (!path) return;
         logNav("contextmenu header", {path});
+        setPendingContextSelectionPaths([]);
         showContextMenu({
           path,
           isDir: true,
+          selectionCount: 1,
           x: event.clientX,
           y: event.clientY,
         });
@@ -2862,9 +3067,11 @@
         if (!path) return;
         event.preventDefault();
         logNav("contextmenu column", {path, column: column.dataset.column});
+        setPendingContextSelectionPaths([]);
         showContextMenu({
           path,
           isDir: true,
+          selectionCount: 1,
           x: event.clientX,
           y: event.clientY,
         });
@@ -2887,30 +3094,34 @@
           dragInProgress = false;
           return;
         }
-        const fileUri = pathToFileUri(path);
+        let dragPaths = [path];
         const mime = guessMimeType(name, isDir);
         setFocusPath(path);
         const matchingRow = rows.find((candidate) => candidate.dataset.path === path) || null;
         if (matchingRow) {
-          matchingRow.focus({preventScroll: true});
-          setActiveColumn(Number(matchingRow.dataset.column || 0));
-          setRowSelectedLocally(matchingRow);
-          ensureRowVisible(matchingRow);
-          ensureColumnAndNextVisible(Number(matchingRow.dataset.column || 0));
+          focusAndRevealRow(matchingRow);
+          if (!matchingRow.classList.contains("is-selected")) {
+            setSingleSelection(matchingRow);
+          }
+          dragPaths = selectedPathsForContext(path);
         } else if (isPreviewDrag) {
           setActiveColumn(columns.length - 1);
           ensureColumnAndNextVisible(columns.length - 1);
         }
 
-        if (startPluginDrag(path, name, isDir, event)) {
+        if (startPluginDrag(dragPaths, name, isDir, event)) {
           return;
         }
 
+        const uris = dragPaths.map((value) => pathToFileUri(value)).filter((value) => !!value);
+        const firstUri = uris[0] || "";
         event.dataTransfer.effectAllowed = "copyMove";
-        event.dataTransfer.setData("text/plain", path);
-        event.dataTransfer.setData("text/uri-list", `${fileUri}\r\n`);
-        event.dataTransfer.setData("DownloadURL", `${mime}:${name}:${fileUri}`);
-        logNav("dragstart", {path, fileUri, mime});
+        event.dataTransfer.setData("text/plain", dragPaths.join("\n"));
+        event.dataTransfer.setData("text/uri-list", `${uris.join("\r\n")}\r\n`);
+        if (firstUri) {
+          event.dataTransfer.setData("DownloadURL", `${mime}:${name}:${firstUri}`);
+        }
+        logNav("dragstart", {count: dragPaths.length, firstPath: dragPaths[0] || null, mime});
       });
       root.addEventListener("dragend", () => {
         setTimeout(() => {
@@ -3092,12 +3303,11 @@
             const firstColumnRow = (rowsByColumn.get(0) || [])[0] || null;
             if (!firstColumnRow) return;
             event.preventDefault();
-            setFocusPath(firstColumnRow.dataset.path);
-            firstColumnRow.focus({preventScroll: true});
-            setActiveColumn(0);
-            ensureRowVisible(firstColumnRow);
-            ensureColumnAndNextVisible(0);
-            firstColumnRow.click();
+            focusAndRevealRow(firstColumnRow);
+            setSingleSelection(firstColumnRow);
+            if (!event.shiftKey) {
+              firstColumnRow.click();
+            }
           }
           return;
         }
@@ -3110,10 +3320,10 @@
 
         if (event.key === "ArrowUp" && rowIndex > 0) {
           target = columnRows[rowIndex - 1];
-          shouldNavigate = true;
+          shouldNavigate = !event.shiftKey;
         } else if (event.key === "ArrowDown" && rowIndex >= 0 && rowIndex < columnRows.length - 1) {
           target = columnRows[rowIndex + 1];
-          shouldNavigate = true;
+          shouldNavigate = !event.shiftKey;
         } else if (event.key === "ArrowLeft" && columnIndex > 0) {
           target =
             selectedInColumn(columnIndex - 1) ||
@@ -3140,12 +3350,16 @@
 
         if (!target) return;
 
-        setFocusPath(target.dataset.path);
-        target.focus({preventScroll: true});
-        const targetColumnIndex = Number(target.dataset.column || 0);
-        setActiveColumn(targetColumnIndex);
-        ensureRowVisible(target);
-        ensureColumnAndNextVisible(targetColumnIndex);
+        focusAndRevealRow(target);
+        if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+          if (event.shiftKey) {
+            selectRangeToRow(target, false);
+          } else {
+            setSingleSelection(target);
+          }
+        } else if (!event.shiftKey && !event.metaKey && !event.ctrlKey) {
+          setSingleSelection(target);
+        }
         if (shouldNavigate) {
           target.click();
         }
