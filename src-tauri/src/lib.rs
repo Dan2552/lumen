@@ -1,5 +1,3 @@
-mod config;
-mod display_path;
 #[macro_use]
 mod templates;
 mod controllers {
