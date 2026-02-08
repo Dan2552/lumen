@@ -132,6 +132,11 @@
       cursor: default;
     }
 
+    .preview-pane.is-pdf {
+      width: 720px;
+      min-width: 560px;
+    }
+
     .preview-header {
       padding: 10px 12px;
       border-bottom: 1px solid #3b4354;
@@ -473,7 +478,7 @@
 
     {% if preview %}
     <aside
-      class="preview-pane"
+      class="preview-pane {% if preview.kind == "pdf" %}is-pdf{% endif %}"
       draggable="true"
       data-preview-path="{{ preview.path }}"
       data-preview-name="{{ preview.title }}"
