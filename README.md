@@ -1,6 +1,13 @@
 # Lumen
 
-Lumen is a desktop file browser built with Tauri, with Finder-style multi-column navigation, previews, tabs, and context actions. As well as text editor fuzzy file search.
+Lumen is a desktop file browser built with Tauri, with
+
+* Finder-style multi-column navigation
+* File previews
+* Tabs
+* Drag and drop support
+* Text-editor-alike fuzzy file search
+* A persistent state so you can pick up where you left off (stored in `~/.lumen/state.json`)
 
 ![Lumen screenshot](docs/screenshot.png)
 
