@@ -1219,7 +1219,6 @@
         pendingRightFromPath: window.__filesPendingRightFromPath || null,
       });
 
-      window.__filesSelectionByTab = window.__filesSelectionByTab || {};
       window.__filesSelectionAnchorByTab = window.__filesSelectionAnchorByTab || {};
       window.__filesPendingContextSelectionByTab = window.__filesPendingContextSelectionByTab || {};
       const rowsByColumn = new Map();
@@ -1231,7 +1230,13 @@
       }
 
       const selectedRows = () => rows.filter((row) => row.classList.contains("is-selected"));
+      const selectedRowsInColumn = (columnIndex) =>
+        selectedRows().filter((row) => Number(row.dataset.column || 0) === Number(columnIndex || 0));
       const selectedPaths = () => selectedRows().map((row) => row.dataset.path || "").filter((value) => !!value);
+      const selectedPathsInColumn = (columnIndex) =>
+        selectedRowsInColumn(columnIndex)
+          .map((row) => row.dataset.path || "")
+          .filter((value) => !!value);
       const rowByPath = (path) => rows.find((row) => row.dataset.path === path) || null;
       const setSelectionAnchorPath = (path) => {
         if (!path) {
@@ -1241,9 +1246,6 @@
         window.__filesSelectionAnchorByTab[activeTabId] = path;
       };
       const getSelectionAnchorPath = () => window.__filesSelectionAnchorByTab[activeTabId] || null;
-      const persistSelection = () => {
-        window.__filesSelectionByTab[activeTabId] = selectedPaths();
-      };
       const setPendingContextSelectionPaths = (paths) => {
         const normalized = Array.from(
           new Set((Array.isArray(paths) ? paths : []).map((value) => String(value || "")).filter((value) => !!value)),
@@ -1370,10 +1372,17 @@
         const selectedSet = new Set(
           (Array.isArray(paths) ? paths : []).map((value) => String(value || "")).filter((value) => !!value),
         );
-        for (const row of rows) {
-          row.classList.toggle("is-selected", selectedSet.has(row.dataset.path || ""));
+        const scopeColumn = Number(options.scopeColumn);
+        if (Number.isFinite(scopeColumn)) {
+          const columnRows = rowsByColumn.get(scopeColumn) || [];
+          for (const row of columnRows) {
+            row.classList.toggle("is-selected", selectedSet.has(row.dataset.path || ""));
+          }
+        } else {
+          for (const row of rows) {
+            row.classList.toggle("is-selected", selectedSet.has(row.dataset.path || ""));
+          }
         }
-        persistSelection();
         if (options.anchorPath !== undefined) {
           setSelectionAnchorPath(options.anchorPath);
         }
@@ -1382,13 +1391,15 @@
         if (!row) return;
         const path = row.dataset.path || "";
         if (!path) return;
-        setSelectionByPaths([path], {anchorPath: path});
+        const columnIndex = Number(row.dataset.column || 0);
+        setSelectionByPaths([path], {anchorPath: path, scopeColumn: columnIndex});
       };
       const toggleRowSelectedLocally = (row) => {
         if (!row) return;
         const path = row.dataset.path || "";
         if (!path) return;
-        const current = new Set(selectedPaths());
+        const columnIndex = Number(row.dataset.column || 0);
+        const current = new Set(selectedPathsInColumn(columnIndex));
         if (current.has(path)) {
           current.delete(path);
         } else {
@@ -1399,7 +1410,7 @@
           setSingleSelection(row);
           return;
         }
-        setSelectionByPaths(next, {anchorPath: path});
+        setSelectionByPaths(next, {anchorPath: path, scopeColumn: columnIndex});
       };
       const selectRangeToRow = (targetRow, additive = false) => {
         if (!targetRow) return;
@@ -1426,36 +1437,29 @@
         const low = Math.min(start, end);
         const high = Math.max(start, end);
         const rangePaths = columnRows.slice(low, high + 1).map((row) => row.dataset.path || "").filter((value) => !!value);
-        const nextPaths = additive ? Array.from(new Set([...selectedPaths(), ...rangePaths])) : rangePaths;
-        setSelectionByPaths(nextPaths, {anchorPath: anchorRow?.dataset?.path || targetPath});
+        const nextPaths = additive
+          ? Array.from(new Set([...selectedPathsInColumn(targetColumn), ...rangePaths]))
+          : rangePaths;
+        setSelectionByPaths(nextPaths, {
+          anchorPath: anchorRow?.dataset?.path || targetPath,
+          scopeColumn: targetColumn,
+        });
       };
       const restoreSelectionFromMemory = () => {
-        const remembered = Array.isArray(window.__filesSelectionByTab[activeTabId])
-          ? window.__filesSelectionByTab[activeTabId]
-          : [];
-        const rememberedRows = remembered.map((path) => rowByPath(path)).filter((row) => !!row);
-        if (rememberedRows.length > 0) {
-          setSelectionByPaths(rememberedRows.map((row) => row.dataset.path || ""));
-          if (!rowByPath(getSelectionAnchorPath())) {
-            setSelectionAnchorPath(rememberedRows[0].dataset.path || null);
-          }
-          return;
-        }
-        const initial = rows.filter((row) => row.classList.contains("is-selected"));
-        if (initial.length > 0) {
-          setSelectionByPaths(initial.map((row) => row.dataset.path || ""));
-          if (!rowByPath(getSelectionAnchorPath())) {
-            setSelectionAnchorPath(initial[0].dataset.path || null);
-          }
-          return;
-        }
-        setSelectionByPaths([]);
-        setSelectionAnchorPath(null);
+        if (rowByPath(getSelectionAnchorPath())) return;
+        const initial =
+          rightmostSelected() ||
+          rows.find((row) => row.dataset.path === getFocusPath()) ||
+          rows.find((row) => row.classList.contains("is-selected")) ||
+          null;
+        setSelectionAnchorPath(initial?.dataset?.path || null);
       };
       const selectedPathsForContext = (path) => {
         const normalizedPath = String(path || "");
         if (!normalizedPath) return [];
-        const selected = selectedPaths();
+        const row = rowByPath(normalizedPath);
+        if (!row) return [normalizedPath];
+        const selected = selectedPathsInColumn(Number(row.dataset.column || 0));
         if (selected.includes(normalizedPath)) {
           return selected;
         }
@@ -2401,7 +2405,8 @@
         const items = [];
         const currentPath = current?.dataset?.path || "";
         const isDir = (current?.dataset?.isDir || "") === "true";
-        const selected = selectedPaths();
+        const currentColumnIndex = Number(current?.dataset?.column || 0);
+        const selected = selectedPathsInColumn(currentColumnIndex);
         const actionPaths = currentPath && selected.includes(currentPath) ? selected : currentPath ? [currentPath] : [];
         const hasMultiSelection = actionPaths.length > 1;
         if (rootPath) {
@@ -2416,7 +2421,6 @@
         const capabilities = currentPath
           ? commandCapabilitiesByPath.get(currentPath) || defaultCommandCapabilities(isDir)
           : defaultCommandCapabilities(false);
-        const currentColumnIndex = Number(current?.dataset?.column || 0);
         const currentColumnPath =
           columns.find((column) => Number(column.dataset.column || 0) === currentColumnIndex)?.dataset.path || rootPath;
 
