@@ -779,6 +779,9 @@ fn should_show_default_open_for_file(path: &Path) -> bool {
     if ext == "godot" {
         return true;
     }
+    if ext == "html" || ext == "htm" {
+        return true;
+    }
     !is_previewable_text_ext(&ext)
 }
 
