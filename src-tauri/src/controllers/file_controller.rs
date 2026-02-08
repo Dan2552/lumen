@@ -795,6 +795,30 @@ fn is_previewable_text_ext(ext: &str) -> bool {
     )
 }
 
+fn is_probably_plain_text(path: &Path) -> bool {
+    const SAMPLE_BYTES: usize = 8192;
+    let Ok(file) = fs::File::open(path) else {
+        return false;
+    };
+    let mut buffer = Vec::new();
+    let mut limited = file.take(SAMPLE_BYTES as u64);
+    if limited.read_to_end(&mut buffer).is_err() {
+        return false;
+    }
+    if buffer.is_empty() {
+        return true;
+    }
+    if buffer.contains(&0) {
+        return false;
+    }
+    let control_bytes = buffer
+        .iter()
+        .filter(|&&byte| (byte < 0x20 && byte != b'\n' && byte != b'\r' && byte != b'\t') || byte == 0x7f)
+        .count();
+    // Allow a small amount of control bytes for odd files, but reject mostly-binary content.
+    (control_bytes as f64) / (buffer.len() as f64) <= 0.01
+}
+
 fn should_show_default_open_for_file(path: &Path) -> bool {
     let ext = path
         .extension()
@@ -1028,7 +1052,8 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
         });
     }
 
-    if is_previewable_text_ext(&ext) {
+    let preview_as_text = is_previewable_text_ext(&ext) || (ext.is_empty() && is_probably_plain_text(path));
+    if preview_as_text {
         const MAX_TEXT_PREVIEW_BYTES: usize = 8 * 1024 * 1024;
         let file = fs::File::open(path).ok()?;
         let file_size = fs::metadata(path).ok().map(|meta| meta.len()).unwrap_or(0);
