@@ -334,6 +334,13 @@
       color: #e9eef9;
     }
 
+    .finder-row.is-drop-target {
+      background: rgba(48, 74, 120, 0.45);
+      border-color: rgba(118, 167, 255, 0.72);
+      border-left-width: 2px;
+      color: #eaf2ff;
+    }
+
     .finder-column.is-active .finder-row.is-selected {
       background: #1f5fbf;
       border-color: #2f86e9;
@@ -1153,8 +1160,11 @@
       const commandInput = root.querySelector("#command-modal-input");
       const commandList = root.querySelector("#command-modal-list");
       let dropTargetColumn = null;
+      let dropTargetRow = null;
       let externalDragPaths = [];
       let externalDragPoint = null;
+      let domDragPoint = null;
+      let tauriPayloadYOffset = null;
       let dragDropUnlisten = null;
       let contextActionUnlisten = null;
       let optionPressed = false;
@@ -1332,9 +1342,17 @@
         row.classList.add("is-selected");
       };
       const clearDropTarget = () => {
+        if (dropTargetRow) {
+          dropTargetRow.classList.remove("is-drop-target");
+          dropTargetRow = null;
+        }
         if (!dropTargetColumn) return;
         dropTargetColumn.classList.remove("is-drop-target");
         dropTargetColumn = null;
+      };
+      const getCurrentDropTargetDir = () => {
+        if (dropTargetRow?.dataset?.path) return dropTargetRow.dataset.path;
+        return dropTargetColumn?.dataset?.path || "";
       };
       const getDropOperation = () => (optionPressed ? "copy" : "move");
       const hideDropHint = () => {
@@ -1348,6 +1366,42 @@
           x: Number(position?.x || 0),
           y: Number(position?.y || 0),
         };
+      };
+      const getBestDragPoint = (position) => {
+        if (domDragPoint) {
+          return {
+            x: Number(domDragPoint.x || 0),
+            y: Number(domDragPoint.y || 0),
+          };
+        }
+        if (tauriPayloadYOffset == null) {
+          const estimatedRowHeight = Number(rows?.[0]?.getBoundingClientRect?.().height || 30);
+          tauriPayloadYOffset = Math.max(0, Math.round(estimatedRowHeight));
+        }
+        const point = getClientPointFromDrop(position);
+        return {
+          x: point.x,
+          y: point.y - tauriPayloadYOffset,
+        };
+      };
+      const normalizePathForCompare = (value) => {
+        if (!value) return "";
+        if (value === "/") return "/";
+        return value.replace(/\/+$/, "") || "/";
+      };
+      const parentDirectoryForPath = (value) => {
+        const normalized = normalizePathForCompare(value);
+        if (!normalized || normalized === "/") return "/";
+        const lastSlash = normalized.lastIndexOf("/");
+        if (lastSlash <= 0) return "/";
+        return normalized.slice(0, lastSlash);
+      };
+      const hasMeaningfulDropTarget = (targetDir) => {
+        const normalizedTarget = normalizePathForCompare(targetDir);
+        if (!normalizedTarget || externalDragPaths.length === 0) return false;
+        return externalDragPaths.some(
+          (sourcePath) => parentDirectoryForPath(sourcePath) !== normalizedTarget,
+        );
       };
       const findColumnAtPoint = (clientX, clientY) => {
         for (const column of columns) {
@@ -1363,18 +1417,63 @@
         }
         return null;
       };
-      const setDropTargetByPoint = (clientX, clientY) => {
-        const column = findColumnAtPoint(clientX, clientY);
+      const findDirectoryRowTargetAtPoint = (column, clientX, clientY) => {
+        if (!column) return null;
+        const hit = document.elementFromPoint(clientX, clientY);
+        const row = hit?.closest?.(".finder-row") || null;
+        if (!row || row.dataset.isDir !== "true") return null;
+        if (row.closest(".finder-column") !== column) return null;
+        const rect = row.getBoundingClientRect();
+        if (clientX < rect.left + rect.width * 0.2) return null;
+        return row;
+      };
+      const applyDropTarget = (column, rowTarget) => {
         if (!column || !column.dataset.path) {
           clearDropTarget();
           return null;
         }
-        if (dropTargetColumn !== column) {
+        const targetDir = rowTarget?.dataset?.path || column.dataset.path;
+        if (!hasMeaningfulDropTarget(targetDir)) {
+          clearDropTarget();
+          return null;
+        }
+        if (dropTargetColumn !== column || dropTargetRow !== rowTarget) {
           clearDropTarget();
           dropTargetColumn = column;
-          dropTargetColumn.classList.add("is-drop-target");
+          dropTargetRow = rowTarget;
+          if (dropTargetRow) {
+            dropTargetRow.classList.add("is-drop-target");
+          } else {
+            dropTargetColumn.classList.add("is-drop-target");
+          }
         }
-        return column;
+        return {column, targetDir};
+      };
+      const setDropTargetByDragEvent = (event) => {
+        const hit = event?.target;
+        const row = hit?.closest?.(".finder-row") || null;
+        const column =
+          row?.closest?.(".finder-column") ||
+          hit?.closest?.(".finder-column") ||
+          findColumnAtPoint(Number(event?.clientX || 0), Number(event?.clientY || 0));
+        if (!column) {
+          clearDropTarget();
+          return null;
+        }
+        let rowTarget = null;
+        if (row && row.dataset.isDir === "true" && row.closest(".finder-column") === column) {
+          const rect = row.getBoundingClientRect();
+          if (Number(event?.clientX || 0) >= rect.left + rect.width * 0.2) {
+            rowTarget = row;
+          }
+        }
+        return applyDropTarget(column, rowTarget);
+      };
+      const setDropTargetByPoint = (clientX, clientY) => {
+        const column = findColumnAtPoint(clientX, clientY);
+        if (!column) return null;
+        const rowTarget = findDirectoryRowTargetAtPoint(column, clientX, clientY);
+        return applyDropTarget(column, rowTarget);
       };
       const updateDropHint = (clientX, clientY, targetDir) => {
         if (!dropHint || !dropHintTitle || !dropHintSubtitle) return;
@@ -1409,6 +1508,11 @@
       };
       const commitExternalDrop = async (targetDir, operation) => {
         if (!targetDir || externalDragPaths.length === 0) return;
+        if (!hasMeaningfulDropTarget(targetDir)) {
+          hideDropHint();
+          clearDropTarget();
+          return;
+        }
         const invoke = window.__TAURI__?.core?.invoke;
         if (typeof invoke !== "function") return;
         hideDropHint();
@@ -2817,14 +2921,14 @@
         if (event.key !== "Alt") return;
         optionPressed = true;
         if (dropTargetColumn && externalDragPoint) {
-          updateDropHint(externalDragPoint.x, externalDragPoint.y, dropTargetColumn.dataset.path || "");
+          updateDropHint(externalDragPoint.x, externalDragPoint.y, getCurrentDropTargetDir());
         }
       });
       document.addEventListener("keyup", (event) => {
         if (event.key !== "Alt") return;
         optionPressed = false;
         if (dropTargetColumn && externalDragPoint) {
-          updateDropHint(externalDragPoint.x, externalDragPoint.y, dropTargetColumn.dataset.path || "");
+          updateDropHint(externalDragPoint.x, externalDragPoint.y, getCurrentDropTargetDir());
         }
       });
 
@@ -3047,12 +3151,25 @@
         }
       };
 
-      window.addEventListener("dragover", (event) => {
+      const handleDomDragHover = (event) => {
         optionPressed = !!event.altKey;
-        if (dropTargetColumn && externalDragPoint) {
-          updateDropHint(externalDragPoint.x, externalDragPoint.y, dropTargetColumn.dataset.path || "");
+        domDragPoint = {x: event.clientX, y: event.clientY};
+        if (externalDragPaths.length > 0) {
+          const dropTarget = setDropTargetByDragEvent(event) || setDropTargetByPoint(domDragPoint.x, domDragPoint.y);
+          if (!dropTarget) {
+            hideDropHint();
+          } else {
+            updateDropHint(domDragPoint.x, domDragPoint.y, dropTarget.targetDir || "");
+          }
+        } else if (dropTargetColumn && externalDragPoint) {
+          updateDropHint(externalDragPoint.x, externalDragPoint.y, getCurrentDropTargetDir());
         }
-      });
+      };
+      window.addEventListener("dragover", handleDomDragHover);
+      document.addEventListener("dragover", handleDomDragHover, true);
+      root.addEventListener("dragover", handleDomDragHover, true);
+      document.addEventListener("dragenter", handleDomDragHover, true);
+      root.addEventListener("dragenter", handleDomDragHover, true);
 
       const bindExternalDrop = () => {
         const getCurrentWindow = window.__TAURI__?.window?.getCurrentWindow;
@@ -3068,6 +3185,8 @@
               hideDropHint();
               clearDropTarget();
               externalDragPaths = [];
+              domDragPoint = null;
+              tauriPayloadYOffset = null;
               return;
             }
             if (type !== "over" && type !== "enter" && type !== "drop") {
@@ -3087,17 +3206,19 @@
               externalDragPaths = sourcePaths;
             }
             if (externalDragPaths.length === 0) return;
-            const point = getClientPointFromDrop(payload.position);
+            const point = getBestDragPoint(payload.position);
             externalDragPoint = point;
-            const targetColumn = setDropTargetByPoint(point.x, point.y);
-            if (!targetColumn) {
+            const dropTarget = setDropTargetByPoint(point.x, point.y);
+            if (!dropTarget) {
               hideDropHint();
               return;
             }
-            const targetDir = targetColumn.dataset.path || "";
+            const targetDir = getCurrentDropTargetDir() || dropTarget.targetDir || "";
             updateDropHint(point.x, point.y, targetDir);
             if (type === "drop") {
               commitExternalDrop(targetDir, getDropOperation());
+              domDragPoint = null;
+              tauriPayloadYOffset = null;
             }
           }),
         )
@@ -3153,6 +3274,11 @@
           }
           saveScrollState();
           document.removeEventListener("keydown", onKeyDown);
+          window.removeEventListener("dragover", handleDomDragHover);
+          document.removeEventListener("dragover", handleDomDragHover, true);
+          root.removeEventListener("dragover", handleDomDragHover, true);
+          document.removeEventListener("dragenter", handleDomDragHover, true);
+          root.removeEventListener("dragenter", handleDomDragHover, true);
         },
         {once: true},
       );
