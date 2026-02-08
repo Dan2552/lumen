@@ -2050,6 +2050,7 @@
                 confirmLabel: "Rename",
                 kind: "prompt",
                 initialValue: name,
+                selectStemOnly: true,
               });
               if (!result.confirmed) return;
               const trimmed = String(result.value || "").trim();
@@ -2131,7 +2132,14 @@
         modalResolve = null;
         resolve(result);
       };
-      const openFilesModal = ({title, message, confirmLabel, kind, initialValue = ""}) =>
+      const openFilesModal = ({
+        title,
+        message,
+        confirmLabel,
+        kind,
+        initialValue = "",
+        selectStemOnly = false,
+      }) =>
         new Promise((resolve) => {
           if (!modalRoot) {
             resolve({confirmed: false, value: ""});
@@ -2149,7 +2157,17 @@
           if (wantsInput) {
             setTimeout(() => {
               modalInput.focus();
-              modalInput.select();
+              if (selectStemOnly) {
+                const value = String(modalInput.value || "");
+                const lastDot = value.lastIndexOf(".");
+                if (lastDot > 0) {
+                  modalInput.setSelectionRange(0, lastDot);
+                } else {
+                  modalInput.select();
+                }
+              } else {
+                modalInput.select();
+              }
             }, 0);
           } else {
             setTimeout(() => {

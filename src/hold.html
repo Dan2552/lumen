@@ -18,6 +18,8 @@
         overflow: hidden;
         background: transparent;
         font-family: "SF Pro Text", "SF Pro Display", "Segoe UI", sans-serif;
+        user-select: none;
+        -webkit-user-select: none;
       }
 
       .shell {
@@ -27,6 +29,8 @@
         border: 1px solid #404759;
         background: rgba(38, 44, 58, 0.9);
         overflow: hidden;
+        user-select: none;
+        -webkit-user-select: none;
       }
 
       .shell.has-items {
@@ -44,6 +48,8 @@
         gap: 10px;
         padding: 0 12px;
         box-sizing: border-box;
+        user-select: none;
+        -webkit-user-select: none;
       }
 
       .drop-area.is-over {
@@ -59,6 +65,8 @@
         overflow: hidden;
         text-overflow: ellipsis;
         flex: 1;
+        user-select: none;
+        -webkit-user-select: none;
       }
 
       .hold-card {
@@ -71,6 +79,7 @@
         box-sizing: border-box;
         cursor: default;
         user-select: none;
+        -webkit-user-select: none;
         display: flex;
         align-items: center;
       }
@@ -85,6 +94,8 @@
         align-items: center;
         gap: 10px;
         width: 100%;
+        user-select: none;
+        -webkit-user-select: none;
       }
 
       .row-icon {
@@ -108,12 +119,16 @@
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+        user-select: none;
+        -webkit-user-select: none;
       }
 
       .count {
         font-size: 11px;
         color: #dce9ff;
         flex-shrink: 0;
+        user-select: none;
+        -webkit-user-select: none;
       }
 
       .clear {
@@ -314,9 +329,8 @@
           });
         };
 
-        holdCard.addEventListener("dragstart", async (event) => {
+        const triggerHoldDrag = async () => {
           if (!heldPaths.length || typeof startDrag !== "function") return;
-          event.preventDefault();
           try {
             const firstPath = heldPaths[0] || "";
             const name = firstPath.split("/").filter(Boolean).pop() || "item";
@@ -326,6 +340,18 @@
             });
           } catch (_error) {
           }
+        };
+
+        holdCard.addEventListener("mousedown", async (event) => {
+          if (event.button !== 0) return;
+          if (event.target instanceof Element && event.target.closest("#clear-button")) return;
+          event.preventDefault();
+          await triggerHoldDrag();
+        });
+
+        holdCard.addEventListener("dragstart", async (event) => {
+          event.preventDefault();
+          await triggerHoldDrag();
         });
 
         clearButton.addEventListener("click", async () => {

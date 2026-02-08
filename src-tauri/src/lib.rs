@@ -42,6 +42,7 @@ fn ensure_hold_window(app: &AppHandle) -> Result<(), tauri::Error> {
         .decorations(false)
         .resizable(false)
         .always_on_top(true)
+        .accept_first_mouse(true)
         .skip_taskbar(true)
         .build()?;
 
