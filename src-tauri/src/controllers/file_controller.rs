@@ -47,6 +47,12 @@ struct PreviewModel {
     note: Option<String>,
 }
 
+#[derive(Debug, Serialize)]
+pub struct ModelPreviewData {
+    mime_type: String,
+    base64: String,
+}
+
 #[derive(Debug, Serialize, Clone)]
 struct TabView {
     id: String,
@@ -235,6 +241,90 @@ fn image_mime_from_ext(ext: &str) -> Option<&'static str> {
         "heic" => Some("image/heic"),
         _ => None,
     }
+}
+
+fn mime_type_for_sidecar(path: &Path) -> &'static str {
+    let ext = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "bin" => "application/octet-stream",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "tif" | "tiff" => "image/tiff",
+        "ktx2" => "image/ktx2",
+        "ktx" => "image/ktx",
+        _ => "application/octet-stream",
+    }
+}
+
+fn is_external_or_data_uri(uri: &str) -> bool {
+    let lower = uri.to_ascii_lowercase();
+    lower.starts_with("data:")
+        || lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("blob:")
+}
+
+fn inline_gltf_sidecars(home: &Path, gltf_path: &Path) -> Result<Vec<u8>, String> {
+    let parent = gltf_path
+        .parent()
+        .ok_or_else(|| "gltf has no parent directory".to_string())?;
+    let raw = fs::read_to_string(gltf_path).map_err(|error| error.to_string())?;
+    let mut gltf: serde_json::Value = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+
+    if let Some(buffers) = gltf.get_mut("buffers").and_then(|value| value.as_array_mut()) {
+        for buffer in buffers {
+            let Some(uri_value) = buffer.get_mut("uri") else {
+                continue;
+            };
+            let Some(uri) = uri_value.as_str() else {
+                continue;
+            };
+            if is_external_or_data_uri(uri) {
+                continue;
+            }
+            let source_path = parent.join(uri);
+            let canonical = source_path.canonicalize().map_err(|error| error.to_string())?;
+            if !canonical.starts_with(home) {
+                return Err("gltf sidecar is outside allowed root".to_string());
+            }
+            let bytes = fs::read(&canonical).map_err(|error| error.to_string())?;
+            let mime = mime_type_for_sidecar(&canonical);
+            *uri_value = serde_json::Value::String(format!("data:{mime};base64,{}", STANDARD.encode(bytes)));
+        }
+    }
+
+    if let Some(images) = gltf.get_mut("images").and_then(|value| value.as_array_mut()) {
+        for image in images {
+            let Some(uri_value) = image.get_mut("uri") else {
+                continue;
+            };
+            let Some(uri) = uri_value.as_str() else {
+                continue;
+            };
+            if is_external_or_data_uri(uri) {
+                continue;
+            }
+            let source_path = parent.join(uri);
+            let canonical = source_path.canonicalize().map_err(|error| error.to_string())?;
+            if !canonical.starts_with(home) {
+                return Err("gltf sidecar is outside allowed root".to_string());
+            }
+            let bytes = fs::read(&canonical).map_err(|error| error.to_string())?;
+            let mime = mime_type_for_sidecar(&canonical);
+            *uri_value = serde_json::Value::String(format!("data:{mime};base64,{}", STANDARD.encode(bytes)));
+        }
+    }
+
+    serde_json::to_vec(&gltf).map_err(|error| error.to_string())
 }
 
 fn is_previewable_text_ext(ext: &str) -> bool {
@@ -1335,7 +1425,7 @@ pub async fn load_pdf_preview_data(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn load_glb_preview_data(path: String) -> Result<String, String> {
+pub async fn load_glb_preview_data(path: String) -> Result<ModelPreviewData, String> {
     let home = home_directory();
     let target = resolve_home_scoped_path(&home, &path)?;
     if !target.is_file() {
@@ -1356,10 +1446,22 @@ pub async fn load_glb_preview_data(path: String) -> Result<String, String> {
         return Err("GLB is too large for inline preview.".to_string());
     }
 
-    let bytes = tokio::fs::read(&target)
-        .await
-        .map_err(|error| error.to_string())?;
-    Ok(STANDARD.encode(bytes))
+    let bytes = if ext == "gltf" {
+        inline_gltf_sidecars(&home, &target)?
+    } else {
+        tokio::fs::read(&target)
+            .await
+            .map_err(|error| error.to_string())?
+    };
+    let mime_type = if ext == "gltf" {
+        "model/gltf+json".to_string()
+    } else {
+        "model/gltf-binary".to_string()
+    };
+    Ok(ModelPreviewData {
+        mime_type,
+        base64: STANDARD.encode(bytes),
+    })
 }
 
 #[tauri::command]

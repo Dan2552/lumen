@@ -591,16 +591,17 @@
         };
         if (rawPath && typeof invoke === "function") {
           invoke("load_glb_preview_data", {path: rawPath})
-            .then((base64) => {
+            .then((payload) => {
               if (previewGlbObjectUrl) {
                 URL.revokeObjectURL(previewGlbObjectUrl);
                 previewGlbObjectUrl = null;
               }
+              const base64 = payload?.base64 || "";
+              const mimeType = payload?.mime_type || "model/gltf-binary";
+              if (!base64) {
+                throw new Error("Empty model preview payload.");
+              }
               const bytes = base64ToBytes(base64);
-              const lowerPath = rawPath.toLowerCase();
-              const mimeType = lowerPath.endsWith(".gltf")
-                ? "model/gltf+json"
-                : "model/gltf-binary";
               const blob = new Blob([bytes], {type: mimeType});
               previewGlbObjectUrl = URL.createObjectURL(blob);
               glbViewer.src = previewGlbObjectUrl;
