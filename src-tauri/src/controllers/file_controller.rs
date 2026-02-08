@@ -2004,6 +2004,7 @@ pub fn show_file_context_menu(
             .separator()
             .text("ctx_set_tab_root", "Set as current tab root")
             .separator()
+            .text("ctx_open_finder", "Open in Finder")
             .text("ctx_open_warp", "Open in Warp")
             .text("ctx_open_zed", "Open in Zed");
         if show_github_desktop {
@@ -2442,6 +2443,16 @@ pub fn open_in_warp(path: String) -> Result<(), String> {
         return Err("warp can only open directories".to_string());
     }
     open_path_with_application("Warp", &target)
+}
+
+#[tauri::command]
+pub fn open_in_finder(path: String) -> Result<(), String> {
+    let home = home_directory();
+    let target = resolve_home_scoped_path(&home, &path)?;
+    if !target.is_dir() {
+        return Err("finder can only open directories".to_string());
+    }
+    open_path_with_application("Finder", &target)
 }
 
 #[tauri::command]

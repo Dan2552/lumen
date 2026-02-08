@@ -223,6 +223,7 @@ pub fn run() {
                 || menu_id == "ctx_open_default"
                 || menu_id == "ctx_open_zed"
                 || menu_id == "ctx_open_warp"
+                || menu_id == "ctx_open_finder"
                 || menu_id == "ctx_open_github_desktop"
             {
                 let action = match menu_id {
@@ -235,6 +236,7 @@ pub fn run() {
                     "ctx_open_default" => "open_default",
                     "ctx_open_zed" => "open_zed",
                     "ctx_open_warp" => "open_warp",
+                    "ctx_open_finder" => "open_finder",
                     "ctx_open_github_desktop" => "open_github_desktop",
                     _ => return,
                 };
@@ -282,6 +284,7 @@ pub fn run() {
             file_controller::open_in_default,
             file_controller::open_in_zed,
             file_controller::open_in_warp,
+            file_controller::open_in_finder,
             file_controller::open_in_github_desktop,
         ])
         .run(tauri::generate_context!())
