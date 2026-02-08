@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+script_dir=$( cd "$( dirname "$0" )" && pwd )
+
+set -e
+
+cd $script_dir/..
+
+bun run tauri build
+
+rm -rf /Applications/Lumen.app
+cp -r src-tauri/target/release/bundle/macos/Lumen.app /Applications/Lumen.app
+
+echo "Lumen.app has been installed to /Applications."
