@@ -1,7 +1,39 @@
-# Tauri + Vanilla
+# Lumen
 
-This template should help get you started developing with Tauri in vanilla HTML, CSS and Javascript.
+Lumen is a desktop file browser built with Tauri, with Finder-style multi-column navigation, previews, tabs, and context actions. As well as text editor fuzzy file search.
 
-## Recommended IDE Setup
+![Lumen screenshot](docs/screenshot.png)
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+![Lumen screenshot fuzzy search](docs/fuzzy.png)
+
+## Build And Run
+
+### 1. Install prerequisites
+
+- Rust (via [rustup](https://rustup.rs/))
+- Tauri CLI:
+  - `cargo install tauri-cli`
+
+On macOS you should also have Xcode Command Line Tools installed:
+
+- `xcode-select --install`
+
+### 2. Development build
+
+From the project root:
+
+```bash
+cargo tauri dev
+```
+
+### 3. Release build
+
+From the project root:
+
+```bash
+cargo tauri build
+```
+
+Build outputs are generated under:
+
+`src-tauri/target/release/bundle/`
