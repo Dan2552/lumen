@@ -10,7 +10,6 @@ Lumen is a desktop file browser built with Tauri, with
 * A persistent state so you can pick up where you left off (stored in `~/.lumen/state.json`)
 
 ![Lumen screenshot](docs/screenshot.png)
-
 ![Lumen screenshot fuzzy search](docs/fuzzy.png)
 
 ## Build And Run
