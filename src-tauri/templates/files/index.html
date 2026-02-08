@@ -589,7 +589,16 @@
     <div class="files-modal-card" role="dialog" aria-modal="true" aria-labelledby="files-modal-title">
       <div class="files-modal-title" id="files-modal-title"></div>
       <div class="files-modal-message" id="files-modal-message"></div>
-      <input id="files-modal-input" class="files-modal-input" type="text" hidden />
+      <input
+        id="files-modal-input"
+        class="files-modal-input"
+        type="text"
+        spellcheck="false"
+        autocorrect="off"
+        autocapitalize="off"
+        autocomplete="off"
+        hidden
+      />
       <div class="files-modal-actions">
         <button id="files-modal-cancel" class="files-modal-button" type="button">Cancel</button>
         <button id="files-modal-confirm" class="files-modal-button" type="button">OK</button>
