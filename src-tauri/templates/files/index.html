@@ -2847,6 +2847,12 @@
 
       const onKeyDown = (event) => {
         const lowered = String(event.key || "").toLowerCase();
+        if (modalRoot && !modalRoot.hidden && event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          closeFilesModal({confirmed: false, value: ""});
+          return;
+        }
         if ((event.metaKey || event.ctrlKey) && event.altKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
           event.preventDefault();
           event.stopPropagation();
