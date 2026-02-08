@@ -2359,10 +2359,7 @@ pub fn create_file(
     if !parent.is_dir() {
         return Err("parent path is not a directory".to_string());
     }
-    let mut clean_name = validate_rename_name(&name)?;
-    if !clean_name.to_ascii_lowercase().ends_with(".txt") {
-        clean_name.push_str(".txt");
-    }
+    let clean_name = validate_rename_name(&name)?;
     let target = parent.join(clean_name);
     if target.exists() {
         return Err("destination already exists".to_string());
