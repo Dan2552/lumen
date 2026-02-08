@@ -172,6 +172,31 @@
       background: rgba(17, 22, 32, 0.8);
     }
 
+    .preview-gallery {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .preview-gallery-item {
+      border: 1px solid #46506a;
+      border-radius: 8px;
+      overflow: hidden;
+      background: rgba(17, 22, 32, 0.8);
+      min-height: 120px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .preview-gallery-item img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+
     .preview-text {
       margin: 0;
       white-space: pre-wrap;
@@ -208,6 +233,15 @@
       border: 1px solid #46506a;
       border-radius: 8px;
       background: radial-gradient(circle at 30% 20%, #3a445a 0%, #1a1f2d 100%);
+    }
+
+    .preview-video {
+      width: 100%;
+      min-height: 520px;
+      height: calc(100vh - 180px);
+      border: 1px solid #46506a;
+      border-radius: 8px;
+      background: rgba(17, 22, 32, 0.8);
     }
 
     .preview-note {
@@ -498,6 +532,14 @@
       <div class="preview-body">
         {% if preview.kind == "image" and preview.image_data_url %}
           <img class="preview-image" src="{{ preview.image_data_url }}" alt="{{ preview.title }}">
+        {% elif preview.kind == "affinity" and preview.affinity_image_data_urls %}
+          <div class="preview-gallery">
+            {% for image_data_url in preview.affinity_image_data_urls %}
+              <div class="preview-gallery-item">
+                <img src="{{ image_data_url }}" alt="{{ preview.title }} thumbnail {{ loop.index }}">
+              </div>
+            {% endfor %}
+          </div>
         {% elif preview.kind == "pdf" and preview.pdf_path %}
           <div class="preview-loading" id="preview-pdf-status">Loading PDF preview...</div>
           <iframe class="preview-pdf" data-pdf-path="{{ preview.pdf_path }}" title="{{ preview.title }}" hidden></iframe>
@@ -513,6 +555,9 @@
             exposure="1"
             hidden
           ></model-viewer>
+        {% elif preview.kind == "video" and preview.video_path %}
+          <div class="preview-loading" id="preview-video-status">Loading video preview...</div>
+          <video class="preview-video" data-video-path="{{ preview.video_path }}" controls preload="metadata" hidden></video>
         {% elif preview.kind == "text" and preview.text_head %}
           <pre class="preview-text">{{ preview.text_head }}</pre>
         {% endif %}
@@ -545,6 +590,7 @@
       if (!root) return;
       let previewPdfObjectUrl = null;
       let previewGlbObjectUrl = null;
+      let previewVideoObjectUrl = null;
       const base64ToBytes = (base64) => {
         const raw = atob(base64);
         const bytes = new Uint8Array(raw.length);
@@ -619,6 +665,38 @@
             });
         } else if (status) {
           status.textContent = "Failed to load 3D preview.";
+        }
+      }
+      const videoPlayer = root.querySelector(".preview-video[data-video-path]");
+      if (videoPlayer) {
+        const rawPath = videoPlayer.getAttribute("data-video-path") || "";
+        const status = root.querySelector("#preview-video-status");
+        const invoke = window.__TAURI__?.core?.invoke;
+        if (rawPath && typeof invoke === "function") {
+          invoke("load_video_preview_data", {path: rawPath})
+            .then((payload) => {
+              if (previewVideoObjectUrl) {
+                URL.revokeObjectURL(previewVideoObjectUrl);
+                previewVideoObjectUrl = null;
+              }
+              const base64 = payload?.base64 || "";
+              const mimeType = payload?.mime_type || "video/mp4";
+              if (!base64) {
+                throw new Error("Empty video preview payload.");
+              }
+              const bytes = base64ToBytes(base64);
+              const blob = new Blob([bytes], {type: mimeType});
+              previewVideoObjectUrl = URL.createObjectURL(blob);
+              videoPlayer.src = previewVideoObjectUrl;
+              videoPlayer.hidden = false;
+              if (status) status.textContent = "";
+            })
+            .catch((error) => {
+              if (status) status.textContent = String(error || "Failed to load video preview.");
+              videoPlayer.hidden = true;
+            });
+        } else if (status) {
+          status.textContent = "Failed to load video preview.";
         }
       }
       const activeTabId = root.dataset.activeTabId || "default";
@@ -1152,6 +1230,16 @@
             const name = path.split("/").filter(Boolean).at(-1) || path;
 
             const normalized = String(action).toLowerCase();
+            if (normalized.includes("open_default")) {
+              logNav("context open default", {path});
+              const invoke = window.__TAURI__?.core?.invoke;
+              if (typeof invoke === "function") {
+                invoke("open_in_default", {path}).catch((error) => {
+                  logNav("open_in_default failed", {path, error: String(error)});
+                });
+              }
+              return;
+            }
             if (normalized.includes("open_zed")) {
               logNav("context open zed", {path});
               const invoke = window.__TAURI__?.core?.invoke;
@@ -1635,6 +1723,10 @@
           if (previewGlbObjectUrl) {
             URL.revokeObjectURL(previewGlbObjectUrl);
             previewGlbObjectUrl = null;
+          }
+          if (previewVideoObjectUrl) {
+            URL.revokeObjectURL(previewVideoObjectUrl);
+            previewVideoObjectUrl = null;
           }
           hideDropHint();
           clearDropTarget();

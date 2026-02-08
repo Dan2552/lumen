@@ -221,6 +221,7 @@ pub fn run() {
                 || menu_id == "ctx_new_dir"
                 || menu_id == "ctx_new_file"
                 || menu_id == "ctx_set_tab_root"
+                || menu_id == "ctx_open_default"
                 || menu_id == "ctx_open_zed"
                 || menu_id == "ctx_open_warp"
             {
@@ -231,6 +232,7 @@ pub fn run() {
                     "ctx_new_dir" => "new_dir",
                     "ctx_new_file" => "new_file",
                     "ctx_set_tab_root" => "set_tab_root",
+                    "ctx_open_default" => "open_default",
                     "ctx_open_zed" => "open_zed",
                     "ctx_open_warp" => "open_warp",
                     _ => return,
@@ -268,6 +270,8 @@ pub fn run() {
             file_controller::set_tab_root,
             file_controller::load_pdf_preview_data,
             file_controller::load_glb_preview_data,
+            file_controller::load_video_preview_data,
+            file_controller::open_in_default,
             file_controller::open_in_zed,
             file_controller::open_in_warp,
         ])

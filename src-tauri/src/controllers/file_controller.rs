@@ -41,8 +41,10 @@ struct PreviewModel {
     path: String,
     icon: String,
     image_data_url: Option<String>,
+    affinity_image_data_urls: Option<Vec<String>>,
     pdf_path: Option<String>,
     glb_path: Option<String>,
+    video_path: Option<String>,
     text_head: Option<String>,
     note: Option<String>,
 }
@@ -243,6 +245,16 @@ fn image_mime_from_ext(ext: &str) -> Option<&'static str> {
     }
 }
 
+fn video_mime_from_ext(ext: &str) -> Option<&'static str> {
+    match ext {
+        "mp4" => Some("video/mp4"),
+        "mov" => Some("video/quicktime"),
+        "m4v" => Some("video/x-m4v"),
+        "webm" => Some("video/webm"),
+        _ => None,
+    }
+}
+
 fn is_affinity_ext(ext: &str) -> bool {
     matches!(ext, "afdesign" | "afphoto" | "afpub")
 }
@@ -301,15 +313,16 @@ fn parse_embedded_png(bytes: &[u8], start: usize) -> Option<(usize, u32, u32)> {
     }
 }
 
-fn extract_affinity_thumbnail_png(path: &Path) -> Option<Vec<u8>> {
+fn extract_affinity_embedded_pngs(path: &Path) -> Option<Vec<Vec<u8>>> {
     const MAX_AFFINITY_SCAN_BYTES: usize = 100 * 1024 * 1024;
+    const MAX_EMBEDDED_PNGS: usize = 24;
     let file = fs::File::open(path).ok()?;
     let mut bytes = Vec::new();
     file.take(MAX_AFFINITY_SCAN_BYTES as u64)
         .read_to_end(&mut bytes)
         .ok()?;
 
-    let mut best: Option<(u64, usize, usize)> = None; // (area, start, end)
+    let mut found: Vec<(u64, usize, usize)> = Vec::new(); // (area, start, end)
     let mut index = 0usize;
     while index + 8 <= bytes.len() {
         if bytes[index] == 137
@@ -323,12 +336,7 @@ fn extract_affinity_thumbnail_png(path: &Path) -> Option<Vec<u8>> {
         {
             if let Some((end, width, height)) = parse_embedded_png(&bytes, index) {
                 let area = width as u64 * height as u64;
-                match best {
-                    Some((best_area, _, _)) if best_area >= area => {}
-                    _ => {
-                        best = Some((area, index, end));
-                    }
-                }
+                found.push((area, index, end));
                 index = end;
                 continue;
             }
@@ -336,7 +344,22 @@ fn extract_affinity_thumbnail_png(path: &Path) -> Option<Vec<u8>> {
         index += 1;
     }
 
-    best.map(|(_, start, end)| bytes[start..end].to_vec())
+    if found.is_empty() {
+        return None;
+    }
+
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    found.dedup_by(|a, b| a.1 == b.1 && a.2 == b.2);
+    if found.len() > MAX_EMBEDDED_PNGS {
+        found.truncate(MAX_EMBEDDED_PNGS);
+    }
+
+    Some(
+        found
+            .into_iter()
+            .map(|(_, start, end)| bytes[start..end].to_vec())
+            .collect(),
+    )
 }
 
 fn mime_type_for_sidecar(path: &Path) -> &'static str {
@@ -463,6 +486,18 @@ fn is_previewable_text_ext(ext: &str) -> bool {
     )
 }
 
+fn should_show_default_open_for_file(path: &Path) -> bool {
+    let ext = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+    if ext == "godot" {
+        return true;
+    }
+    !is_previewable_text_ext(&ext)
+}
+
 fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
     let path = focus_path?;
     if !path.is_file() {
@@ -479,20 +514,26 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
         .unwrap_or_default();
 
     if is_affinity_ext(&ext) {
-        if let Some(png) = extract_affinity_thumbnail_png(path) {
-            let data_url = format!("data:image/png;base64,{}", STANDARD.encode(png));
+        if let Some(pngs) = extract_affinity_embedded_pngs(path) {
+            let mut data_urls: Vec<String> = pngs
+                .into_iter()
+                .map(|png| format!("data:image/png;base64,{}", STANDARD.encode(png)))
+                .collect();
+            let first = data_urls.first().cloned();
             return Some(PreviewModel {
-                kind: "image".to_string(),
+                kind: "affinity".to_string(),
                 title: file_name,
                 subtitle,
                 path: path.to_string_lossy().to_string(),
                 icon,
-                image_data_url: Some(data_url),
-                pdf_path: None,
-                glb_path: None,
-                text_head: None,
-                note: Some("Embedded Affinity thumbnail preview.".to_string()),
-            });
+                image_data_url: first,
+            affinity_image_data_urls: Some(std::mem::take(&mut data_urls)),
+            pdf_path: None,
+            glb_path: None,
+            video_path: None,
+            text_head: None,
+            note: Some("Embedded Affinity thumbnails.".to_string()),
+        });
         }
         return Some(PreviewModel {
             kind: "unknown".to_string(),
@@ -501,8 +542,10 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
             path: path.to_string_lossy().to_string(),
             icon,
             image_data_url: None,
+            affinity_image_data_urls: None,
             pdf_path: None,
             glb_path: None,
+            video_path: None,
             text_head: None,
             note: Some("No embedded Affinity thumbnail found.".to_string()),
         });
@@ -519,8 +562,10 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
                 path: path.to_string_lossy().to_string(),
                 icon,
                 image_data_url: None,
+                affinity_image_data_urls: None,
                 pdf_path: None,
                 glb_path: None,
+                video_path: None,
                 text_head: None,
                 note: Some("Image is too large for inline preview (max 64MB).".to_string()),
             });
@@ -535,8 +580,10 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
             path: path.to_string_lossy().to_string(),
             icon,
             image_data_url: Some(data_url),
+            affinity_image_data_urls: None,
             pdf_path: None,
             glb_path: None,
+            video_path: None,
             text_head: None,
             note: None,
         });
@@ -550,8 +597,10 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
             path: path.to_string_lossy().to_string(),
             icon,
             image_data_url: None,
+            affinity_image_data_urls: None,
             pdf_path: Some(path.to_string_lossy().to_string()),
             glb_path: None,
+            video_path: None,
             text_head: None,
             note: None,
         });
@@ -565,8 +614,27 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
             path: path.to_string_lossy().to_string(),
             icon,
             image_data_url: None,
+            affinity_image_data_urls: None,
             pdf_path: None,
             glb_path: Some(path.to_string_lossy().to_string()),
+            video_path: None,
+            text_head: None,
+            note: None,
+        });
+    }
+
+    if video_mime_from_ext(&ext).is_some() {
+        return Some(PreviewModel {
+            kind: "video".to_string(),
+            title: file_name,
+            subtitle,
+            path: path.to_string_lossy().to_string(),
+            icon,
+            image_data_url: None,
+            affinity_image_data_urls: None,
+            pdf_path: None,
+            glb_path: None,
+            video_path: Some(path.to_string_lossy().to_string()),
             text_head: None,
             note: None,
         });
@@ -587,8 +655,10 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
             path: path.to_string_lossy().to_string(),
             icon,
             image_data_url: None,
+            affinity_image_data_urls: None,
             pdf_path: None,
             glb_path: None,
+            video_path: None,
             text_head: Some(text),
             note: if file_size > MAX_TEXT_PREVIEW_BYTES as u64 {
                 Some("Showing the first 8MB.".to_string())
@@ -605,8 +675,10 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
         path: path.to_string_lossy().to_string(),
         icon,
         image_data_url: None,
+        affinity_image_data_urls: None,
         pdf_path: None,
         glb_path: None,
+        video_path: None,
         text_head: None,
         note: Some("No preview available for this file type yet.".to_string()),
     })
@@ -1299,6 +1371,7 @@ pub fn show_file_context_menu(
 
     let path_buf = PathBuf::from(&path);
     let relative_path = relative_path_from_root(&path_buf, &root);
+    let show_default_open = should_show_default_open_for_file(&path_buf);
 
     let mut pending = state
         .pending
@@ -1322,6 +1395,9 @@ pub fn show_file_context_menu(
             .text("ctx_open_zed", "Open in Zed")
             .separator();
     } else {
+        if show_default_open {
+            builder = builder.text("ctx_open_default", "Open");
+        }
         builder = builder.text("ctx_open_zed", "Open in Zed").separator();
     }
     let menu = builder
@@ -1523,6 +1599,21 @@ fn open_path_with_application(app_name: &str, path: &Path) -> Result<(), String>
 }
 
 #[tauri::command]
+pub fn open_in_default(path: String) -> Result<(), String> {
+    let home = home_directory();
+    let target = resolve_home_scoped_path(&home, &path)?;
+    let status = Command::new("open")
+        .arg(&target)
+        .status()
+        .map_err(|error| error.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("failed to open path".to_string())
+    }
+}
+
+#[tauri::command]
 pub async fn load_pdf_preview_data(path: String) -> Result<String, String> {
     let home = home_directory();
     let target = resolve_home_scoped_path(&home, &path)?;
@@ -1586,6 +1677,37 @@ pub async fn load_glb_preview_data(path: String) -> Result<ModelPreviewData, Str
     };
     Ok(ModelPreviewData {
         mime_type,
+        base64: STANDARD.encode(bytes),
+    })
+}
+
+#[tauri::command]
+pub async fn load_video_preview_data(path: String) -> Result<ModelPreviewData, String> {
+    let home = home_directory();
+    let target = resolve_home_scoped_path(&home, &path)?;
+    if !target.is_file() {
+        return Err("path is not a file".to_string());
+    }
+    let ext = target
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+    let Some(mime_type) = video_mime_from_ext(&ext) else {
+        return Err("path is not a supported video".to_string());
+    };
+
+    const MAX_VIDEO_PREVIEW_BYTES: u64 = 100 * 1024 * 1024;
+    let metadata = fs::metadata(&target).map_err(|error| error.to_string())?;
+    if metadata.len() > MAX_VIDEO_PREVIEW_BYTES {
+        return Err("Video is too large for inline preview.".to_string());
+    }
+
+    let bytes = tokio::fs::read(&target)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(ModelPreviewData {
+        mime_type: mime_type.to_string(),
         base64: STANDARD.encode(bytes),
     })
 }
