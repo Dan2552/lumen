@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::{
-    collections::{BTreeMap, hash_map::DefaultHasher},
+    collections::{BTreeMap, HashMap, hash_map::DefaultHasher},
     env, fs,
     hash::{Hash, Hasher},
     io::{ErrorKind, Write},
@@ -1311,6 +1311,36 @@ fn active_tab_root_path(tab: &TabState, home: &Path) -> PathBuf {
         .unwrap_or_else(|| home.to_path_buf())
 }
 
+fn root_display_name(root: &Path, disambiguate: bool) -> String {
+    let base = label_from_path(root);
+    if !disambiguate {
+        return base;
+    }
+    if let Some(parent) = root.parent() {
+        let parent_name = label_from_path(parent);
+        if !parent_name.is_empty() && parent_name != base {
+            return format!("{parent_name}/{base}");
+        }
+    }
+    base
+}
+
+fn tab_title(tab: &TabState, home: &Path, disambiguate_root: bool) -> String {
+    let root = active_tab_root_path(tab, home);
+    let root_name = root_display_name(&root, disambiguate_root);
+    let focus = tab
+        .focus_path
+        .as_deref()
+        .map(PathBuf::from)
+        .filter(|path| path.starts_with(&root) && path != &root);
+
+    if let Some(focus_path) = focus {
+        format!("{root_name} - {}", label_from_path(&focus_path))
+    } else {
+        root_name
+    }
+}
+
 fn relative_path_from_root(path: &Path, root: &Path) -> String {
     path.strip_prefix(root)
         .ok()
@@ -1441,18 +1471,24 @@ fn render_view(model: &TabsModel) -> String {
         .as_ref()
         .map(|path| path.to_string_lossy().to_string())
         .unwrap_or_else(|| active_root_path.to_string_lossy().to_string());
+    let mut root_basename_counts: HashMap<String, usize> = HashMap::new();
+    for tab in &model.tabs {
+        let root = active_tab_root_path(tab, &home);
+        let key = label_from_path(&root);
+        *root_basename_counts.entry(key).or_insert(0) += 1;
+    }
     let tabs: Vec<TabView> = model
         .tabs
         .iter()
-        .map(|tab| TabView {
-            id: tab.id.to_string(),
-            title: tab
-                .focus_path
-                .as_deref()
-                .map(Path::new)
-                .map(label_from_path)
-                .unwrap_or_else(|| "New Tab".to_string()),
-            is_active: tab.id == model.active_id,
+        .map(|tab| {
+            let root = active_tab_root_path(tab, &home);
+            let basename = label_from_path(&root);
+            let disambiguate_root = root_basename_counts.get(&basename).copied().unwrap_or(0) > 1;
+            TabView {
+                id: tab.id.to_string(),
+                title: tab_title(tab, &home, disambiguate_root),
+                is_active: tab.id == model.active_id,
+            }
         })
         .collect();
 
