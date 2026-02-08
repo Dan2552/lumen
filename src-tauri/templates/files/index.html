@@ -1328,7 +1328,7 @@
           ? document.activeElement
           : null;
       const rememberedRow = rows.find((row) => row.dataset.path === getFocusPath());
-      const initialRow = initialFromRight || focusedRow || rememberedRow || rightmostSelected() || null;
+      const initialRow = initialFromRight || focusedRow || rightmostSelected() || rememberedRow || null;
       restoreScrollState();
 
       if (initialRow) {
@@ -1526,6 +1526,7 @@
         const selected = items[searchSelectedIndex] || items[0];
         const path = selected?.dataset?.path || "";
         if (!path) return;
+        setFocusPath(path);
         closeSearchPalette();
         htmxCommandSwap("navigate", {path});
       };
