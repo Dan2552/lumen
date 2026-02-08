@@ -2331,6 +2331,29 @@
 
       const onKeyDown = (event) => {
         const lowered = String(event.key || "").toLowerCase();
+        if ((event.metaKey || event.ctrlKey) && event.altKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+          event.preventDefault();
+          event.stopPropagation();
+          const tabIds = Array.from(root.querySelectorAll(".tab-shell[data-tab-id]"))
+            .map((tab) => tab.dataset.tabId || "")
+            .filter((id) => id.length > 0);
+          if (tabIds.length > 1) {
+            const currentIndex = Math.max(0, tabIds.indexOf(activeTabId));
+            const delta = event.key === "ArrowRight" ? 1 : -1;
+            const nextIndex = (currentIndex + delta + tabIds.length) % tabIds.length;
+            const targetId = tabIds[nextIndex];
+            if (targetId && targetId !== activeTabId) {
+              htmxCommandSwap("activate_tab", {tabId: targetId});
+            }
+          }
+          return;
+        }
+        if ((event.metaKey || event.ctrlKey) && lowered === "n") {
+          event.preventDefault();
+          event.stopPropagation();
+          htmxCommandSwap("new_tab", {path: getFocusPath() || ""});
+          return;
+        }
         if ((event.metaKey || event.ctrlKey) && lowered === "g") {
           event.preventDefault();
           openGoToModal();
