@@ -243,6 +243,102 @@ fn image_mime_from_ext(ext: &str) -> Option<&'static str> {
     }
 }
 
+fn is_affinity_ext(ext: &str) -> bool {
+    matches!(ext, "afdesign" | "afphoto" | "afpub")
+}
+
+fn parse_embedded_png(bytes: &[u8], start: usize) -> Option<(usize, u32, u32)> {
+    const PNG_SIGNATURE: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
+    if start + PNG_SIGNATURE.len() > bytes.len() {
+        return None;
+    }
+    if bytes[start..start + PNG_SIGNATURE.len()] != PNG_SIGNATURE {
+        return None;
+    }
+
+    let mut cursor = start + PNG_SIGNATURE.len();
+    let mut width: Option<u32> = None;
+    let mut height: Option<u32> = None;
+
+    loop {
+        if cursor + 8 > bytes.len() {
+            return None;
+        }
+        let chunk_len = u32::from_be_bytes([
+            bytes[cursor],
+            bytes[cursor + 1],
+            bytes[cursor + 2],
+            bytes[cursor + 3],
+        ]) as usize;
+        let chunk_type = &bytes[cursor + 4..cursor + 8];
+        let data_start = cursor + 8;
+        let data_end = data_start.checked_add(chunk_len)?;
+        let crc_end = data_end.checked_add(4)?;
+        if crc_end > bytes.len() {
+            return None;
+        }
+
+        if chunk_type == b"IHDR" && chunk_len >= 13 {
+            width = Some(u32::from_be_bytes([
+                bytes[data_start],
+                bytes[data_start + 1],
+                bytes[data_start + 2],
+                bytes[data_start + 3],
+            ]));
+            height = Some(u32::from_be_bytes([
+                bytes[data_start + 4],
+                bytes[data_start + 5],
+                bytes[data_start + 6],
+                bytes[data_start + 7],
+            ]));
+        }
+
+        if chunk_type == b"IEND" {
+            return Some((crc_end, width.unwrap_or(0), height.unwrap_or(0)));
+        }
+
+        cursor = crc_end;
+    }
+}
+
+fn extract_affinity_thumbnail_png(path: &Path) -> Option<Vec<u8>> {
+    const MAX_AFFINITY_SCAN_BYTES: usize = 100 * 1024 * 1024;
+    let file = fs::File::open(path).ok()?;
+    let mut bytes = Vec::new();
+    file.take(MAX_AFFINITY_SCAN_BYTES as u64)
+        .read_to_end(&mut bytes)
+        .ok()?;
+
+    let mut best: Option<(u64, usize, usize)> = None; // (area, start, end)
+    let mut index = 0usize;
+    while index + 8 <= bytes.len() {
+        if bytes[index] == 137
+            && bytes[index + 1] == 80
+            && bytes[index + 2] == 78
+            && bytes[index + 3] == 71
+            && bytes[index + 4] == 13
+            && bytes[index + 5] == 10
+            && bytes[index + 6] == 26
+            && bytes[index + 7] == 10
+        {
+            if let Some((end, width, height)) = parse_embedded_png(&bytes, index) {
+                let area = width as u64 * height as u64;
+                match best {
+                    Some((best_area, _, _)) if best_area >= area => {}
+                    _ => {
+                        best = Some((area, index, end));
+                    }
+                }
+                index = end;
+                continue;
+            }
+        }
+        index += 1;
+    }
+
+    best.map(|(_, start, end)| bytes[start..end].to_vec())
+}
+
 fn mime_type_for_sidecar(path: &Path) -> &'static str {
     let ext = path
         .extension()
@@ -381,6 +477,36 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
         .and_then(|value| value.to_str())
         .map(|value| value.to_ascii_lowercase())
         .unwrap_or_default();
+
+    if is_affinity_ext(&ext) {
+        if let Some(png) = extract_affinity_thumbnail_png(path) {
+            let data_url = format!("data:image/png;base64,{}", STANDARD.encode(png));
+            return Some(PreviewModel {
+                kind: "image".to_string(),
+                title: file_name,
+                subtitle,
+                path: path.to_string_lossy().to_string(),
+                icon,
+                image_data_url: Some(data_url),
+                pdf_path: None,
+                glb_path: None,
+                text_head: None,
+                note: Some("Embedded Affinity thumbnail preview.".to_string()),
+            });
+        }
+        return Some(PreviewModel {
+            kind: "unknown".to_string(),
+            title: file_name,
+            subtitle,
+            path: path.to_string_lossy().to_string(),
+            icon,
+            image_data_url: None,
+            pdf_path: None,
+            glb_path: None,
+            text_head: None,
+            note: Some("No embedded Affinity thumbnail found.".to_string()),
+        });
+    }
 
     if let Some(mime) = image_mime_from_ext(&ext) {
         const MAX_IMAGE_PREVIEW_BYTES: u64 = 64 * 1024 * 1024;
