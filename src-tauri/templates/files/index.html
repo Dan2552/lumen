@@ -1044,6 +1044,7 @@
       let searchDebounceTimer = null;
       let searchSelectedIndex = 0;
       let searchSelectedPath = null;
+      let searchUserPicked = false;
       let searchPreviewPath = null;
       const searchPreviewObjectUrls = [];
       let lastSearchResultsHtml = "";
@@ -1662,6 +1663,14 @@
         if (items.length === 0) {
           searchSelectedIndex = 0;
           searchSelectedPath = null;
+          searchUserPicked = false;
+          requestSearchPreview(null);
+          return;
+        }
+        if (!searchUserPicked) {
+          searchSelectedPath = null;
+          items.forEach((item) => item.classList.remove("is-active"));
+          requestSearchPreview(null);
           return;
         }
         if (searchSelectedPath) {
@@ -1690,6 +1699,20 @@
             }
           }
         }
+      };
+      const moveSearchSelection = (delta) => {
+        const items = getSearchItems();
+        if (items.length === 0) return;
+        if (!searchUserPicked) {
+          searchUserPicked = true;
+          searchSelectedIndex = delta >= 0 ? 0 : items.length - 1;
+          searchSelectedPath = null;
+          applySearchSelection();
+          return;
+        }
+        searchSelectedIndex += delta;
+        searchSelectedPath = null;
+        applySearchSelection();
       };
       const pollSearchResults = () => {
         if (!isSearchOpen() || !searchResults || typeof invoke !== "function") return;
@@ -1744,6 +1767,7 @@
         }
         lastSearchResultsHtml = "";
         searchSelectedPath = null;
+        searchUserPicked = false;
         searchPreviewPath = null;
         clearSearchPreviewUrls();
         if (searchPreview) {
@@ -1791,6 +1815,7 @@
         searchInput.value = "";
         searchSelectedIndex = 0;
         searchSelectedPath = null;
+        searchUserPicked = false;
         searchPreviewPath = null;
         clearSearchPreviewUrls();
         if (searchPreview) {
@@ -1807,6 +1832,7 @@
         }, 0);
       };
       const openSearchSelection = () => {
+        if (!searchUserPicked) return;
         const items = getSearchItems();
         if (items.length === 0) return;
         const selected = items[searchSelectedIndex] || items[0];
@@ -1827,17 +1853,13 @@
           if (event.key === "ArrowDown") {
             event.preventDefault();
             event.stopPropagation();
-            searchSelectedIndex += 1;
-            searchSelectedPath = null;
-            applySearchSelection();
+            moveSearchSelection(1);
             return;
           }
           if (event.key === "ArrowUp") {
             event.preventDefault();
             event.stopPropagation();
-            searchSelectedIndex -= 1;
-            searchSelectedPath = null;
-            applySearchSelection();
+            moveSearchSelection(-1);
             return;
           }
           if (event.key === "Enter") {
@@ -1853,6 +1875,7 @@
           searchDebounceTimer = setTimeout(() => {
             searchSelectedIndex = 0;
             searchSelectedPath = null;
+            searchUserPicked = false;
             requestSearch(searchInput.value || "");
           }, 90);
         });
@@ -1864,6 +1887,7 @@
           const items = getSearchItems();
           const index = items.findIndex((candidate) => candidate === item);
           if (index >= 0) {
+            searchUserPicked = true;
             searchSelectedIndex = index;
             searchSelectedPath = item.dataset.path || null;
           }
@@ -2343,14 +2367,12 @@
           }
           if (event.key === "ArrowDown") {
             event.preventDefault();
-            searchSelectedIndex += 1;
-            applySearchSelection();
+            moveSearchSelection(1);
             return;
           }
           if (event.key === "ArrowUp") {
             event.preventDefault();
-            searchSelectedIndex -= 1;
-            applySearchSelection();
+            moveSearchSelection(-1);
             return;
           }
           if (event.key === "Enter") {
