@@ -72,6 +72,13 @@ struct SearchResultItem {
     icon: &'static str,
 }
 
+#[derive(Debug, Serialize)]
+pub struct PathContextCapabilities {
+    is_dir: bool,
+    show_default_open: bool,
+    show_github_desktop: bool,
+}
+
 #[derive(Debug)]
 struct SearchModel {
     generation: u64,
@@ -109,6 +116,8 @@ struct TabState {
     root_path: Option<String>,
     #[serde(default)]
     focus_path: Option<String>,
+    #[serde(default)]
+    show_hidden: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -174,7 +183,7 @@ struct SortableEntry {
     entry: FileEntry,
 }
 
-fn list_directory(path: &PathBuf, sort_mode: DirectorySortMode) -> Vec<FileEntry> {
+fn list_directory(path: &PathBuf, sort_mode: DirectorySortMode, show_hidden: bool) -> Vec<FileEntry> {
     let Ok(entries) = fs::read_dir(path) else {
         return Vec::new();
     };
@@ -185,7 +194,7 @@ fn list_directory(path: &PathBuf, sort_mode: DirectorySortMode) -> Vec<FileEntry
             let entry_path = entry.path();
             let file_name = entry.file_name();
             let name = file_name.to_string_lossy().to_string();
-            if name.starts_with('.') {
+            if !show_hidden && name.starts_with('.') {
                 return None;
             }
             let metadata = entry.metadata().ok()?;
@@ -792,6 +801,36 @@ fn is_git_repository_dir(path: &Path) -> bool {
     path.join(".git").exists()
 }
 
+fn find_git_repository_ancestor(path: &Path) -> Option<PathBuf> {
+    let mut current = if path.is_dir() {
+        path.to_path_buf()
+    } else {
+        path.parent()?.to_path_buf()
+    };
+    loop {
+        if is_git_repository_dir(&current) {
+            return Some(current);
+        }
+        if !current.pop() {
+            break;
+        }
+    }
+    None
+}
+
+fn resolve_github_desktop_repo_for_path(path: &Path, tab_root: &Path) -> Option<PathBuf> {
+    if !path.is_dir() {
+        return None;
+    }
+    if let Some(repo) = find_git_repository_ancestor(path) {
+        return Some(repo);
+    }
+    if path.starts_with(tab_root) && is_git_repository_dir(tab_root) {
+        return Some(tab_root.to_path_buf());
+    }
+    None
+}
+
 fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
     let path = focus_path?;
     if !path.is_file() {
@@ -1048,10 +1087,27 @@ fn is_directory(path: &Path) -> bool {
     fs::metadata(path).map(|meta| meta.is_dir()).unwrap_or(false)
 }
 
+fn has_hidden_component_between(root: &Path, target: &Path) -> bool {
+    target
+        .strip_prefix(root)
+        .ok()
+        .map(|relative| {
+            relative.components().any(|component| {
+                component
+                    .as_os_str()
+                    .to_str()
+                    .map(|value| value.starts_with('.') && value != "." && value != "..")
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
 fn build_columns(
     home: &Path,
     focus_path: Option<&Path>,
     directory_sorts: &BTreeMap<String, DirectorySortMode>,
+    show_hidden: bool,
 ) -> Vec<Column> {
     let components = focus_path
         .filter(|path| path.starts_with(home))
@@ -1066,7 +1122,7 @@ fn build_columns(
             .get(&parent_dir.to_string_lossy().to_string())
             .copied()
             .unwrap_or(DirectorySortMode::Alphabetical);
-        let entries = list_directory(&parent_dir, sort_mode);
+        let entries = list_directory(&parent_dir, sort_mode, show_hidden);
         let selected_path = if let Some(component) = components.get(depth) {
             let candidate = parent_dir.join(component);
             let candidate_str = candidate.to_string_lossy().to_string();
@@ -1488,6 +1544,7 @@ fn run_fuzzy_search_worker(
     generation: u64,
     root: PathBuf,
     query: String,
+    show_hidden: bool,
 ) {
     const MAX_RESULTS: usize = 200;
     const FLUSH_EVERY: u64 = 40;
@@ -1504,7 +1561,7 @@ fn run_fuzzy_search_worker(
         for entry in entries.flatten() {
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') {
+            if !show_hidden && name.starts_with('.') {
                 continue;
             }
             scanned += 1;
@@ -1609,6 +1666,7 @@ fn ensure_tabs(model: &mut TabsModel, home: &Path) {
             id: 1,
             root_path: None,
             focus_path: None,
+            show_hidden: false,
         });
         model.active_id = 1;
         model.next_id = 2;
@@ -1680,10 +1738,12 @@ fn render_view(model: &TabsModel) -> String {
         .and_then(|tab| tab.focus_path.clone())
         .map(PathBuf::from)
         .filter(|path| path.starts_with(&active_root_path));
+    let active_show_hidden = active_tab.map(|tab| tab.show_hidden).unwrap_or(false);
     let columns = build_columns(
         &active_root_path,
         active_focus_path.as_deref(),
         &model.directory_sorts,
+        active_show_hidden,
     );
     let preview = build_preview(active_focus_path.as_deref());
     let active_path_for_new = active_focus_path
@@ -1713,6 +1773,7 @@ fn render_view(model: &TabsModel) -> String {
 
     context.insert("root_name", &label_from_path(&active_root_path));
     context.insert("root_path", &active_root_path.to_string_lossy().to_string());
+    context.insert("show_hidden", &active_show_hidden);
     context.insert("columns", &columns);
     context.insert("tabs", &tabs);
     context.insert("active_path", &active_path_for_new);
@@ -1798,6 +1859,9 @@ pub fn go_to_location(state: State<'_, FileTabsState>, path: String) -> Result<S
             tab.root_path = Some("/".to_string());
         }
         let effective_root = active_tab_root_path(tab, &home);
+        if has_hidden_component_between(&effective_root, &target) {
+            tab.show_hidden = true;
+        }
         if target.starts_with(&effective_root) {
             tab.focus_path = Some(target.to_string_lossy().to_string());
         }
@@ -1841,6 +1905,7 @@ pub fn new_tab(state: State<'_, FileTabsState>, _path: String) -> String {
         id,
         root_path: None,
         focus_path: None,
+        show_hidden: false,
     });
     model.active_id = id;
 
@@ -1984,7 +2049,7 @@ pub fn show_file_context_menu(
     let path_buf = PathBuf::from(&path);
     let relative_path = relative_path_from_root(&path_buf, &root);
     let show_default_open = should_show_default_open_for_file(&path_buf);
-    let show_github_desktop = is_dir && is_git_repository_dir(&path_buf);
+    let show_github_desktop = is_dir && resolve_github_desktop_repo_for_path(&path_buf, &root).is_some();
 
     let mut pending = state
         .pending
@@ -2202,6 +2267,31 @@ pub fn set_directory_sort(
 }
 
 #[tauri::command]
+pub fn set_tab_show_hidden(
+    state: State<'_, FileTabsState>,
+    show_hidden: String,
+) -> Result<String, String> {
+    let home = home_directory();
+    let mut model = state
+        .tabs
+        .lock()
+        .map_err(|_| "failed to lock tabs state".to_string())?;
+    ensure_tabs(&mut model, &home);
+
+    let parsed = match show_hidden.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" => true,
+        "false" | "0" | "no" | "off" => false,
+        _ => return Err("invalid show_hidden value".to_string()),
+    };
+
+    if let Some(tab) = active_tab_mut(&mut model) {
+        tab.show_hidden = parsed;
+    }
+    persist_tabs_model(&model);
+    Ok(render_view(&model))
+}
+
+#[tauri::command]
 pub fn fuzzy_search_start(
     tabs_state: State<'_, FileTabsState>,
     search_state: State<'_, FileSearchState>,
@@ -2220,6 +2310,7 @@ pub fn fuzzy_search_start(
         .or_else(|| tabs.tabs.first())
         .ok_or_else(|| "missing active tab".to_string())?;
     let root = active_tab_root_path(active_tab, &home);
+    let show_hidden = active_tab.show_hidden;
     drop(tabs);
 
     let trimmed = query.trim().to_string();
@@ -2242,7 +2333,7 @@ pub fn fuzzy_search_start(
     }
 
     std::thread::spawn(move || {
-        run_fuzzy_search_worker(shared, generation, root, trimmed);
+        run_fuzzy_search_worker(shared, generation, root, trimmed, show_hidden);
     });
     Ok(())
 }
@@ -2456,13 +2547,32 @@ pub fn open_in_finder(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn open_in_github_desktop(path: String) -> Result<(), String> {
+pub fn open_in_github_desktop(
+    path: String,
+    tabs_state: State<'_, FileTabsState>,
+) -> Result<(), String> {
     let home = home_directory();
+    let mut model = tabs_state
+        .tabs
+        .lock()
+        .map_err(|_| "failed to lock tabs state".to_string())?;
+    ensure_tabs(&mut model, &home);
+    let tab_root = model
+        .tabs
+        .iter()
+        .find(|tab| tab.id == model.active_id)
+        .or_else(|| model.tabs.first())
+        .map(|tab| active_tab_root_path(tab, &home))
+        .unwrap_or_else(|| home.clone());
+    drop(model);
+
     let target = resolve_home_scoped_path(&home, &path)?;
     if !target.is_dir() {
         return Err("github desktop can only open directories".to_string());
     }
-    open_path_with_application("GitHub Desktop", &target)
+    let repo = resolve_github_desktop_repo_for_path(&target, &tab_root)
+        .ok_or_else(|| "no git repository found for directory".to_string())?;
+    open_path_with_application("GitHub Desktop", &repo)
 }
 
 #[tauri::command]
@@ -2492,4 +2602,33 @@ pub fn set_tab_root(state: State<'_, FileTabsState>, path: String) -> Result<Str
     }
     persist_tabs_model(&model);
     Ok(render_view(&model))
+}
+
+#[tauri::command]
+pub fn path_context_capabilities(
+    path: String,
+    tabs_state: State<'_, FileTabsState>,
+) -> Result<PathContextCapabilities, String> {
+    let home = home_directory();
+    let mut model = tabs_state
+        .tabs
+        .lock()
+        .map_err(|_| "failed to lock tabs state".to_string())?;
+    ensure_tabs(&mut model, &home);
+    let tab_root = model
+        .tabs
+        .iter()
+        .find(|tab| tab.id == model.active_id)
+        .or_else(|| model.tabs.first())
+        .map(|tab| active_tab_root_path(tab, &home))
+        .unwrap_or_else(|| home.clone());
+    drop(model);
+
+    let target = resolve_home_scoped_path(&home, &path)?;
+    let is_dir = target.is_dir();
+    Ok(PathContextCapabilities {
+        is_dir,
+        show_default_open: !is_dir && should_show_default_open_for_file(&target),
+        show_github_desktop: is_dir && resolve_github_desktop_repo_for_path(&target, &tab_root).is_some(),
+    })
 }

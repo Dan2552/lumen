@@ -1,4 +1,10 @@
-<div id="main-root" class="files-root" data-active-tab-id="{{ active_tab_id }}">
+<div
+  id="main-root"
+  class="files-root"
+  data-active-tab-id="{{ active_tab_id }}"
+  data-root-path="{{ root_path }}"
+  data-show-hidden="{% if show_hidden %}true{% else %}false{% endif %}"
+>
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
   <style>
     #main-root.files-root {
@@ -557,6 +563,97 @@
       cursor: default;
     }
 
+    .command-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 1510;
+      background: rgba(10, 13, 20, 0.45);
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding-top: 64px;
+    }
+
+    .command-modal[hidden] {
+      display: none !important;
+    }
+
+    .command-modal-panel {
+      width: min(780px, calc(100vw - 36px));
+      max-height: min(70vh, 620px);
+      border: 1px solid #4a546b;
+      border-radius: 10px;
+      overflow: hidden;
+      background: linear-gradient(180deg, #323a4a 0%, #2a3140 100%);
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .command-modal-input {
+      height: 42px;
+      border: none;
+      border-bottom: 1px solid #3f485d;
+      outline: none;
+      padding: 0 12px;
+      background: rgba(19, 23, 32, 0.9);
+      color: #e7ecf8;
+      font: inherit;
+      font-size: 14px;
+    }
+
+    .command-modal-list {
+      overflow-y: auto;
+      min-height: 44px;
+      max-height: min(58vh, 520px);
+      padding: 4px;
+    }
+
+    .command-modal-empty {
+      padding: 10px 12px;
+      color: #95a1b8;
+      font-size: 12px;
+    }
+
+    .command-item {
+      width: 100%;
+      min-height: 34px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: transparent;
+      color: #d7deeb;
+      text-align: left;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 0 10px;
+      cursor: default;
+    }
+
+    .command-item.is-active {
+      border-color: #2f86e9;
+      background: #1f5fbf;
+      color: #f3f6ff;
+    }
+
+    .command-item-label {
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .command-item-hint {
+      color: #9aa5bb;
+      font-size: 11px;
+      flex-shrink: 0;
+    }
+
+    .command-item.is-active .command-item-hint {
+      color: #d7e6ff;
+    }
+
     .files-search {
       position: fixed;
       inset: 0;
@@ -874,6 +971,23 @@
       </div>
     </div>
   </div>
+  <div id="command-modal" class="command-modal" hidden>
+    <div class="command-modal-panel" role="dialog" aria-modal="true" aria-labelledby="command-modal-input">
+      <input
+        id="command-modal-input"
+        class="command-modal-input"
+        type="text"
+        placeholder="Type a command..."
+        spellcheck="false"
+        autocorrect="off"
+        autocapitalize="off"
+        autocomplete="off"
+      />
+      <div id="command-modal-list" class="command-modal-list">
+        <div class="command-modal-empty">No commands.</div>
+      </div>
+    </div>
+  </div>
 
   <script>
     (() => {
@@ -991,6 +1105,8 @@
         }
       }
       const activeTabId = root.dataset.activeTabId || "default";
+      const rootPath = root.dataset.rootPath || "";
+      const showHidden = (root.dataset.showHidden || "").toLowerCase() === "true";
       const DEBUG_NAV = true;
       const DEBUG_SCROLL = true;
       const logNav = (...args) => {
@@ -1033,6 +1149,9 @@
       const gotoError = root.querySelector("#goto-modal-error");
       const gotoCancel = root.querySelector("#goto-modal-cancel");
       const gotoGo = root.querySelector("#goto-modal-go");
+      const commandModal = root.querySelector("#command-modal");
+      const commandInput = root.querySelector("#command-modal-input");
+      const commandList = root.querySelector("#command-modal-list");
       let dropTargetColumn = null;
       let externalDragPaths = [];
       let externalDragPoint = null;
@@ -1046,6 +1165,9 @@
       let searchSelectedPath = null;
       let searchUserPicked = false;
       let searchPreviewPath = null;
+      let commandItems = [];
+      let commandSelectionIndex = 0;
+      const commandCapabilitiesByPath = new Map();
       const searchPreviewObjectUrls = [];
       let lastSearchResultsHtml = "";
       window.__filesScrollStateByTab = window.__filesScrollStateByTab || {};
@@ -1100,6 +1222,24 @@
         [...selectedRows].sort((a, b) => Number(a.dataset.column) - Number(b.dataset.column)).at(-1);
       const selectedInColumn = (columnIndex) =>
         selectedRows.find((row) => Number(row.dataset.column) === columnIndex) || null;
+      const focusedRow = () =>
+        (root.contains(document.activeElement) && document.activeElement.classList.contains("finder-row")
+          ? document.activeElement
+          : null) ||
+        rows.find((row) => row.dataset.path === getFocusPath()) ||
+        rightmostSelected() ||
+        null;
+      const toRelativePath = (path) => {
+        const value = String(path || "");
+        if (!value) return "";
+        if (!rootPath || rootPath === "/") {
+          return value.startsWith("/") ? value.slice(1) || "/" : value;
+        }
+        if (value === rootPath) return ".";
+        const prefix = `${rootPath}/`;
+        if (value.startsWith(prefix)) return value.slice(prefix.length);
+        return value;
+      };
 
       const setActiveColumn = (columnIndex) => {
         for (const column of columns) {
@@ -1457,12 +1597,12 @@
         window.__filesPendingRightFromPath = null;
       }
 
-      const focusedRow =
+      const focusedInitialRow =
         root.contains(document.activeElement) && document.activeElement.classList.contains("finder-row")
           ? document.activeElement
           : null;
       const rememberedRow = rows.find((row) => row.dataset.path === getFocusPath());
-      const initialRow = initialFromRight || focusedRow || rightmostSelected() || rememberedRow || null;
+      const initialRow = initialFromRight || focusedInitialRow || rightmostSelected() || rememberedRow || null;
       restoreScrollState();
 
       if (initialRow) {
@@ -1530,6 +1670,147 @@
       const invoke = window.__TAURI__?.core?.invoke;
       const isSearchOpen = () => !!searchRoot && !searchRoot.hidden;
       const isGotoOpen = () => !!gotoModal && !gotoModal.hidden;
+      const isCommandOpen = () => !!commandModal && !commandModal.hidden;
+      const runContextAction = async (action, path) => {
+        if (!action || !path) return;
+        logNav("context action", {action, path});
+        const name = path.split("/").filter(Boolean).at(-1) || path;
+        const normalized = String(action).toLowerCase();
+        if (normalized.includes("open_default")) {
+          logNav("context open default", {path});
+          if (typeof invoke === "function") {
+            invoke("open_in_default", {path}).catch((error) => {
+              logNav("open_in_default failed", {path, error: String(error)});
+            });
+          }
+          return;
+        }
+        if (normalized.includes("open_zed")) {
+          logNav("context open zed", {path});
+          if (typeof invoke === "function") {
+            invoke("open_in_zed", {path}).catch((error) => {
+              logNav("open_in_zed failed", {path, error: String(error)});
+            });
+          }
+          return;
+        }
+        if (normalized.includes("open_warp")) {
+          logNav("context open warp", {path});
+          if (typeof invoke === "function") {
+            invoke("open_in_warp", {path}).catch((error) => {
+              logNav("open_in_warp failed", {path, error: String(error)});
+            });
+          }
+          return;
+        }
+        if (normalized.includes("open_finder")) {
+          logNav("context open finder", {path});
+          if (typeof invoke === "function") {
+            invoke("open_in_finder", {path}).catch((error) => {
+              logNav("open_in_finder failed", {path, error: String(error)});
+            });
+          }
+          return;
+        }
+        if (normalized.includes("open_github_desktop")) {
+          logNav("context open github desktop", {path});
+          if (typeof invoke === "function") {
+            invoke("open_in_github_desktop", {path}).catch((error) => {
+              logNav("open_in_github_desktop failed", {path, error: String(error)});
+            });
+          }
+          return;
+        }
+        if (normalized.includes("set_tab_root")) {
+          logNav("context set tab root", {path});
+          htmxCommandSwap("set_tab_root", {path});
+          return;
+        }
+        if (normalized.includes("copy_absolute_path")) {
+          const writeText = navigator.clipboard?.writeText?.bind(navigator.clipboard);
+          if (typeof writeText === "function") {
+            writeText(path).catch((error) => logNav("copy absolute failed", {path, error: String(error)}));
+          }
+          return;
+        }
+        if (normalized.includes("copy_relative_path")) {
+          const writeText = navigator.clipboard?.writeText?.bind(navigator.clipboard);
+          const value = toRelativePath(path);
+          if (typeof writeText === "function") {
+            writeText(value).catch((error) => logNav("copy relative failed", {path, error: String(error)}));
+          }
+          return;
+        }
+        if (normalized.includes("rename")) {
+          const result = await openFilesModal({
+            title: "Rename",
+            message: "Enter a new name:",
+            confirmLabel: "Rename",
+            kind: "prompt",
+            initialValue: name,
+            selectStemOnly: true,
+          });
+          if (!result.confirmed) return;
+          const trimmed = String(result.value || "").trim();
+          if (!trimmed || trimmed === name) return;
+          logNav("context rename submit", {path, newName: trimmed});
+          htmxCommandSwap("rename_path", {path, newName: trimmed});
+          return;
+        }
+        if (normalized.includes("new_dir")) {
+          const result = await openFilesModal({
+            title: "Create Directory",
+            message: "Directory name:",
+            confirmLabel: "Create",
+            kind: "prompt",
+            initialValue: "New Folder",
+          });
+          if (!result.confirmed) return;
+          const trimmed = String(result.value || "").trim();
+          if (!trimmed) return;
+          logNav("context create dir", {path, name: trimmed});
+          htmxCommandSwap("create_directory", {parentPath: path, name: trimmed});
+          return;
+        }
+        if (normalized.includes("new_file")) {
+          const result = await openFilesModal({
+            title: "Create File",
+            message: "File name (empty text file):",
+            confirmLabel: "Create",
+            kind: "prompt",
+            initialValue: "untitled.txt",
+          });
+          if (!result.confirmed) return;
+          const trimmed = String(result.value || "").trim();
+          if (!trimmed) return;
+          logNav("context create file", {path, name: trimmed});
+          htmxCommandSwap("create_file", {parentPath: path, name: trimmed});
+          return;
+        }
+        if (normalized.includes("trash")) {
+          const result = await openFilesModal({
+            title: "Move to Trash",
+            message: `Move "${name}" to Trash?`,
+            confirmLabel: "Trash",
+            kind: "confirm",
+          });
+          if (!result.confirmed) return;
+          logNav("context trash confirm", {path});
+          htmxCommandSwap("trash_path", {path});
+          return;
+        }
+        if (normalized.includes("delete")) {
+          const result = await openFilesModal({
+            title: "Delete Permanently",
+            message: `Delete "${name}" permanently?\nThis cannot be undone.`,
+            confirmLabel: "Delete",
+            kind: "danger",
+          });
+          if (!result.confirmed) return;
+          logNav("context delete confirm", {path});
+          htmxCommandSwap("delete_path", {path});
+        }
+      };
       const setSearchStatus = (message) => {
         if (searchInlineStatus) {
           searchInlineStatus.textContent = String(message || "");
@@ -1842,6 +2123,290 @@
         closeSearchPalette();
         htmxCommandSwap("navigate", {path});
       };
+      const closeCommandModal = () => {
+        if (!commandModal) return;
+        commandModal.hidden = true;
+      };
+      const defaultCommandCapabilities = (isDir) => ({
+        is_dir: !!isDir,
+        show_default_open: false,
+        show_github_desktop: false,
+      });
+      const maybeLoadCommandCapabilities = (path, isDir) => {
+        if (!path || typeof invoke !== "function") return;
+        if (commandCapabilitiesByPath.has(path)) return;
+        commandCapabilitiesByPath.set(path, defaultCommandCapabilities(isDir));
+        invoke("path_context_capabilities", {path})
+          .then((capabilities) => {
+            commandCapabilitiesByPath.set(path, {
+              is_dir: !!capabilities?.is_dir,
+              show_default_open: !!capabilities?.show_default_open,
+              show_github_desktop: !!capabilities?.show_github_desktop,
+            });
+            if (isCommandOpen()) {
+              renderCommandItems();
+            }
+          })
+          .catch((error) => {
+            logNav("path_context_capabilities failed", {path, error: String(error)});
+          });
+      };
+      const getCommandItems = () => {
+        const current = focusedRow();
+        const items = [];
+        const currentPath = current?.dataset?.path || "";
+        const isDir = (current?.dataset?.isDir || "") === "true";
+        if (rootPath) {
+          maybeLoadCommandCapabilities(rootPath, true);
+        }
+        if (currentPath) {
+          maybeLoadCommandCapabilities(currentPath, isDir);
+        }
+        const rootCapabilities = rootPath
+          ? commandCapabilitiesByPath.get(rootPath) || defaultCommandCapabilities(true)
+          : defaultCommandCapabilities(true);
+        const capabilities = currentPath
+          ? commandCapabilitiesByPath.get(currentPath) || defaultCommandCapabilities(isDir)
+          : defaultCommandCapabilities(false);
+        const currentColumnIndex = Number(current?.dataset?.column || 0);
+        const currentColumnPath =
+          columns.find((column) => Number(column.dataset.column || 0) === currentColumnIndex)?.dataset.path || rootPath;
+
+        items.push({
+          label: "Tab: Go to location",
+          hint: "Cmd+G",
+          run: () => {
+            closeCommandModal();
+            openGoToModal();
+          },
+        });
+        items.push({
+          label: showHidden ? "Tab: Hide hidden files" : "Tab: Show hidden files",
+          hint: "",
+          run: () => {
+            closeCommandModal();
+            htmxCommandSwap("set_tab_show_hidden", {showHidden: !showHidden});
+          },
+        });
+        if (rootPath) {
+          items.push({
+            label: "Tab Root Directory: Open in Zed",
+            hint: "",
+            run: () => {
+              closeCommandModal();
+              runContextAction("open_zed", rootPath);
+            },
+          });
+          items.push({
+            label: "Tab Root Directory: Open in Finder",
+            hint: "",
+            run: () => {
+              closeCommandModal();
+              runContextAction("open_finder", rootPath);
+            },
+          });
+          items.push({
+            label: "Tab Root Directory: Open in Warp",
+            hint: "",
+            run: () => {
+              closeCommandModal();
+              runContextAction("open_warp", rootPath);
+            },
+          });
+          if (rootCapabilities.show_github_desktop) {
+            items.push({
+              label: "Tab Root Directory: Open in GitHub Desktop",
+              hint: "",
+              run: () => {
+                closeCommandModal();
+                runContextAction("open_github_desktop", rootPath);
+              },
+            });
+          }
+        }
+
+        if (currentPath) {
+          const prefix = isDir ? "Directory" : "File";
+          if (isDir) {
+            items.push({
+              label: "Directory: Create directory",
+              hint: "",
+              run: () => {
+                closeCommandModal();
+                runContextAction("new_dir", currentPath);
+              },
+            });
+            items.push({
+              label: "Directory: Create file",
+              hint: "",
+              run: () => {
+                closeCommandModal();
+                runContextAction("new_file", currentPath);
+              },
+            });
+            items.push({
+              label: "Directory: Set as current tab root",
+              hint: "",
+              run: () => {
+                closeCommandModal();
+                runContextAction("set_tab_root", currentPath);
+              },
+            });
+            items.push({
+              label: "Directory: Open in Finder",
+              hint: "",
+              run: () => {
+                closeCommandModal();
+                runContextAction("open_finder", currentPath);
+              },
+            });
+            items.push({
+              label: "Directory: Open in Warp",
+              hint: "",
+              run: () => {
+                closeCommandModal();
+                runContextAction("open_warp", currentPath);
+              },
+            });
+            if (capabilities.show_github_desktop) {
+              items.push({
+                label: "Selected Directory: Open in GitHub Desktop",
+                hint: "",
+                run: () => {
+                  closeCommandModal();
+                  runContextAction("open_github_desktop", currentPath);
+                },
+              });
+            }
+          } else {
+            if (capabilities.show_default_open) {
+              items.push({
+                label: "File: Open",
+                hint: "",
+                run: () => {
+                  closeCommandModal();
+                  runContextAction("open_default", currentPath);
+                },
+              });
+            }
+          }
+          items.push({
+            label: `${prefix}: Open in Zed`,
+            hint: "",
+            run: () => {
+              closeCommandModal();
+              runContextAction("open_zed", currentPath);
+            },
+          });
+          items.push({
+            label: `${prefix}: Copy absolute path`,
+            hint: "",
+            run: () => {
+              closeCommandModal();
+              runContextAction("copy_absolute_path", currentPath);
+            },
+          });
+          items.push({
+            label: `${prefix}: Copy relative path`,
+            hint: "",
+            run: () => {
+              closeCommandModal();
+              runContextAction("copy_relative_path", currentPath);
+            },
+          });
+          items.push({
+            label: `${prefix}: Rename`,
+            hint: "",
+            run: () => {
+              closeCommandModal();
+              runContextAction("rename", currentPath);
+            },
+          });
+          items.push({
+            label: `${prefix}: Trash`,
+            hint: "",
+            run: () => {
+              closeCommandModal();
+              runContextAction("trash", currentPath);
+            },
+          });
+          items.push({
+            label: `${prefix}: Delete`,
+            hint: "",
+            run: () => {
+              closeCommandModal();
+              runContextAction("delete", currentPath);
+            },
+          });
+        } else if (currentColumnPath) {
+          items.push({
+            label: "Directory: Create directory",
+            hint: "",
+            run: () => {
+              closeCommandModal();
+              runContextAction("new_dir", currentColumnPath);
+            },
+          });
+          items.push({
+            label: "Directory: Create file",
+            hint: "",
+            run: () => {
+              closeCommandModal();
+              runContextAction("new_file", currentColumnPath);
+            },
+          });
+        }
+
+        return items;
+      };
+      const filteredCommandItems = (query) => {
+        const normalized = String(query || "").trim().toLowerCase();
+        const source = getCommandItems();
+        if (!normalized) return source;
+        return source.filter((item) => item.label.toLowerCase().includes(normalized));
+      };
+      const renderCommandItems = () => {
+        if (!commandList) return;
+        const query = commandInput?.value || "";
+        commandItems = filteredCommandItems(query);
+        if (commandSelectionIndex < 0) commandSelectionIndex = 0;
+        if (commandSelectionIndex >= commandItems.length) commandSelectionIndex = commandItems.length - 1;
+        if (commandItems.length === 0) {
+          commandSelectionIndex = 0;
+          commandList.innerHTML = '<div class="command-modal-empty">No matching commands.</div>';
+          return;
+        }
+        commandList.innerHTML = commandItems
+          .map((item, index) => {
+            const activeClass = index === commandSelectionIndex ? " is-active" : "";
+            return `<button type="button" class="command-item${activeClass}" data-index="${index}">
+              <span class="command-item-label">${item.label}</span>
+              <span class="command-item-hint">${item.hint || ""}</span>
+            </button>`;
+          })
+          .join("");
+        const active = commandList.querySelector(`.command-item[data-index="${commandSelectionIndex}"]`);
+        if (active) active.scrollIntoView({block: "nearest"});
+      };
+      const openCommandModal = () => {
+        if (!commandModal || !commandInput) return;
+        closeSearchPalette();
+        closeGoToModal();
+        commandModal.hidden = false;
+        commandSelectionIndex = 0;
+        commandInput.value = "";
+        renderCommandItems();
+        setTimeout(() => {
+          commandInput.focus();
+          commandInput.select();
+        }, 0);
+      };
+      const executeSelectedCommand = () => {
+        if (!commandItems.length) return;
+        const selected = commandItems[commandSelectionIndex];
+        if (!selected || typeof selected.run !== "function") return;
+        selected.run();
+      };
       if (searchInput) {
         searchInput.addEventListener("keydown", (event) => {
           if (event.key === "Escape") {
@@ -1938,6 +2503,58 @@
           }
         });
       }
+      if (commandInput) {
+        commandInput.addEventListener("input", () => {
+          commandSelectionIndex = 0;
+          renderCommandItems();
+        });
+        commandInput.addEventListener("keydown", (event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            closeCommandModal();
+            return;
+          }
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!commandItems.length) return;
+            commandSelectionIndex = Math.min(commandSelectionIndex + 1, commandItems.length - 1);
+            renderCommandItems();
+            return;
+          }
+          if (event.key === "ArrowUp") {
+            event.preventDefault();
+            event.stopPropagation();
+            if (!commandItems.length) return;
+            commandSelectionIndex = Math.max(commandSelectionIndex - 1, 0);
+            renderCommandItems();
+            return;
+          }
+          if (event.key === "Enter") {
+            event.preventDefault();
+            event.stopPropagation();
+            executeSelectedCommand();
+          }
+        });
+      }
+      if (commandList) {
+        commandList.addEventListener("click", (event) => {
+          const target = event.target.closest(".command-item[data-index]");
+          if (!target) return;
+          const index = Number(target.dataset.index || -1);
+          if (!Number.isFinite(index) || index < 0 || index >= commandItems.length) return;
+          commandSelectionIndex = index;
+          executeSelectedCommand();
+        });
+      }
+      if (commandModal) {
+        commandModal.addEventListener("click", (event) => {
+          if (event.target === commandModal) {
+            closeCommandModal();
+          }
+        });
+      }
       const tabsBar = root.querySelector(".tabs-bar");
       let suppressTabClickUntil = 0;
       if (tabsBar) {
@@ -1984,136 +2601,7 @@
             const action = event?.payload?.action || "";
             const path = event?.payload?.path || "";
             if (!action || !path) return;
-            logNav("context action", {action, path});
-            const name = path.split("/").filter(Boolean).at(-1) || path;
-
-            const normalized = String(action).toLowerCase();
-            if (normalized.includes("open_default")) {
-              logNav("context open default", {path});
-              const invoke = window.__TAURI__?.core?.invoke;
-              if (typeof invoke === "function") {
-                invoke("open_in_default", {path}).catch((error) => {
-                  logNav("open_in_default failed", {path, error: String(error)});
-                });
-              }
-              return;
-            }
-            if (normalized.includes("open_zed")) {
-              logNav("context open zed", {path});
-              const invoke = window.__TAURI__?.core?.invoke;
-              if (typeof invoke === "function") {
-                invoke("open_in_zed", {path}).catch((error) => {
-                  logNav("open_in_zed failed", {path, error: String(error)});
-                });
-              }
-              return;
-            }
-            if (normalized.includes("open_warp")) {
-              logNav("context open warp", {path});
-              const invoke = window.__TAURI__?.core?.invoke;
-              if (typeof invoke === "function") {
-                invoke("open_in_warp", {path}).catch((error) => {
-                  logNav("open_in_warp failed", {path, error: String(error)});
-                });
-              }
-              return;
-            }
-            if (normalized.includes("open_finder")) {
-              logNav("context open finder", {path});
-              const invoke = window.__TAURI__?.core?.invoke;
-              if (typeof invoke === "function") {
-                invoke("open_in_finder", {path}).catch((error) => {
-                  logNav("open_in_finder failed", {path, error: String(error)});
-                });
-              }
-              return;
-            }
-            if (normalized.includes("open_github_desktop")) {
-              logNav("context open github desktop", {path});
-              const invoke = window.__TAURI__?.core?.invoke;
-              if (typeof invoke === "function") {
-                invoke("open_in_github_desktop", {path}).catch((error) => {
-                  logNav("open_in_github_desktop failed", {path, error: String(error)});
-                });
-              }
-              return;
-            }
-            if (normalized.includes("set_tab_root")) {
-              logNav("context set tab root", {path});
-              htmxCommandSwap("set_tab_root", {path});
-              return;
-            }
-            if (normalized.includes("rename")) {
-              const result = await openFilesModal({
-                title: "Rename",
-                message: "Enter a new name:",
-                confirmLabel: "Rename",
-                kind: "prompt",
-                initialValue: name,
-                selectStemOnly: true,
-              });
-              if (!result.confirmed) return;
-              const trimmed = String(result.value || "").trim();
-              if (!trimmed || trimmed === name) return;
-              logNav("context rename submit", {path, newName: trimmed});
-              htmxCommandSwap("rename_path", {path, newName: trimmed});
-              return;
-            }
-            if (normalized.includes("new_dir")) {
-              const result = await openFilesModal({
-                title: "Create Directory",
-                message: "Directory name:",
-                confirmLabel: "Create",
-                kind: "prompt",
-                initialValue: "New Folder",
-              });
-              if (!result.confirmed) return;
-              const trimmed = String(result.value || "").trim();
-              if (!trimmed) return;
-              logNav("context create dir", {path, name: trimmed});
-              htmxCommandSwap("create_directory", {parentPath: path, name: trimmed});
-              return;
-            }
-            if (normalized.includes("new_file")) {
-              const result = await openFilesModal({
-                title: "Create File",
-                message: "File name (empty text file):",
-                confirmLabel: "Create",
-                kind: "prompt",
-                initialValue: "untitled.txt",
-              });
-              if (!result.confirmed) return;
-              const trimmed = String(result.value || "").trim();
-              if (!trimmed) return;
-              logNav("context create file", {path, name: trimmed});
-              htmxCommandSwap("create_file", {parentPath: path, name: trimmed});
-              return;
-            }
-
-            if (normalized.includes("trash")) {
-              const result = await openFilesModal({
-                title: "Move to Trash",
-                message: `Move "${name}" to Trash?`,
-                confirmLabel: "Trash",
-                kind: "confirm",
-              });
-              if (!result.confirmed) return;
-              logNav("context trash confirm", {path});
-              htmxCommandSwap("trash_path", {path});
-              return;
-            }
-
-            if (normalized.includes("delete")) {
-              const result = await openFilesModal({
-                title: "Delete Permanently",
-                message: `Delete "${name}" permanently?\nThis cannot be undone.`,
-                confirmLabel: "Delete",
-                kind: "danger",
-              });
-              if (!result.confirmed) return;
-              logNav("context delete confirm", {path});
-              htmxCommandSwap("delete_path", {path});
-            }
+            await runContextAction(action, path);
           }),
         )
           .then((unlisten) => {
@@ -2382,9 +2870,45 @@
           htmxCommandSwap("new_tab", {path: getFocusPath() || ""});
           return;
         }
+        if ((event.metaKey || event.ctrlKey) && event.shiftKey && lowered === "p") {
+          event.preventDefault();
+          event.stopPropagation();
+          openCommandModal();
+          return;
+        }
         if ((event.metaKey || event.ctrlKey) && lowered === "g") {
           event.preventDefault();
           openGoToModal();
+          return;
+        }
+        if (isCommandOpen()) {
+          if (commandInput && document.activeElement !== commandInput) {
+            commandInput.focus({preventScroll: true});
+          }
+          if (event.key === "Escape") {
+            event.preventDefault();
+            closeCommandModal();
+            return;
+          }
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
+            if (!commandItems.length) return;
+            commandSelectionIndex = Math.min(commandSelectionIndex + 1, commandItems.length - 1);
+            renderCommandItems();
+            return;
+          }
+          if (event.key === "ArrowUp") {
+            event.preventDefault();
+            if (!commandItems.length) return;
+            commandSelectionIndex = Math.max(commandSelectionIndex - 1, 0);
+            renderCommandItems();
+            return;
+          }
+          if (event.key === "Enter") {
+            event.preventDefault();
+            executeSelectedCommand();
+            return;
+          }
           return;
         }
         if (isGotoOpen()) {

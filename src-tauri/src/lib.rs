@@ -274,6 +274,7 @@ pub fn run() {
             file_controller::create_directory,
             file_controller::create_file,
             file_controller::set_directory_sort,
+            file_controller::set_tab_show_hidden,
             file_controller::set_tab_root,
             file_controller::fuzzy_search_start,
             file_controller::fuzzy_search_cancel,
@@ -287,6 +288,7 @@ pub fn run() {
             file_controller::open_in_warp,
             file_controller::open_in_finder,
             file_controller::open_in_github_desktop,
+            file_controller::path_context_capabilities,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
