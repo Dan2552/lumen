@@ -267,6 +267,7 @@ pub fn run() {
             file_controller::set_directory_sort,
             file_controller::set_tab_root,
             file_controller::load_pdf_preview_data,
+            file_controller::load_glb_preview_data,
             file_controller::open_in_zed,
             file_controller::open_in_warp,
         ])

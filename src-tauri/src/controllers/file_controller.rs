@@ -42,6 +42,7 @@ struct PreviewModel {
     icon: String,
     image_data_url: Option<String>,
     pdf_path: Option<String>,
+    glb_path: Option<String>,
     text_head: Option<String>,
     note: Option<String>,
 }
@@ -241,6 +242,13 @@ fn is_previewable_text_ext(ext: &str) -> bool {
         ext,
         "txt"
             | "md"
+            | "gd"
+            | "gdshader"
+            | "tscn"
+            | "tres"
+            | "godot"
+            | "cfg"
+            | "ini"
             | "rs"
             | "js"
             | "ts"
@@ -285,7 +293,7 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
         .unwrap_or_default();
 
     if let Some(mime) = image_mime_from_ext(&ext) {
-        const MAX_IMAGE_PREVIEW_BYTES: u64 = 8 * 1024 * 1024;
+        const MAX_IMAGE_PREVIEW_BYTES: u64 = 64 * 1024 * 1024;
         let file_size = fs::metadata(path).ok().map(|meta| meta.len()).unwrap_or(0);
         if file_size > MAX_IMAGE_PREVIEW_BYTES {
             return Some(PreviewModel {
@@ -296,8 +304,9 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
                 icon,
                 image_data_url: None,
                 pdf_path: None,
+                glb_path: None,
                 text_head: None,
-                note: Some("Image is too large for inline preview.".to_string()),
+                note: Some("Image is too large for inline preview (max 64MB).".to_string()),
             });
         }
 
@@ -311,6 +320,7 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
             icon,
             image_data_url: Some(data_url),
             pdf_path: None,
+            glb_path: None,
             text_head: None,
             note: None,
         });
@@ -325,17 +335,34 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
             icon,
             image_data_url: None,
             pdf_path: Some(path.to_string_lossy().to_string()),
+            glb_path: None,
+            text_head: None,
+            note: None,
+        });
+    }
+
+    if ext == "glb" || ext == "gltf" {
+        return Some(PreviewModel {
+            kind: "glb".to_string(),
+            title: file_name,
+            subtitle,
+            path: path.to_string_lossy().to_string(),
+            icon,
+            image_data_url: None,
+            pdf_path: None,
+            glb_path: Some(path.to_string_lossy().to_string()),
             text_head: None,
             note: None,
         });
     }
 
     if is_previewable_text_ext(&ext) {
-        const MAX_TEXT_PREVIEW_BYTES: usize = 16 * 1024;
-        let mut file = fs::File::open(path).ok()?;
-        let mut buffer = vec![0u8; MAX_TEXT_PREVIEW_BYTES];
-        let read = file.read(&mut buffer).ok()?;
-        buffer.truncate(read);
+        const MAX_TEXT_PREVIEW_BYTES: usize = 8 * 1024 * 1024;
+        let file = fs::File::open(path).ok()?;
+        let file_size = fs::metadata(path).ok().map(|meta| meta.len()).unwrap_or(0);
+        let mut buffer = Vec::new();
+        let mut limited = file.take(MAX_TEXT_PREVIEW_BYTES as u64);
+        limited.read_to_end(&mut buffer).ok()?;
         let text = String::from_utf8_lossy(&buffer).to_string();
         return Some(PreviewModel {
             kind: "text".to_string(),
@@ -345,8 +372,13 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
             icon,
             image_data_url: None,
             pdf_path: None,
+            glb_path: None,
             text_head: Some(text),
-            note: Some("Showing the first 16KB.".to_string()),
+            note: if file_size > MAX_TEXT_PREVIEW_BYTES as u64 {
+                Some("Showing the first 8MB.".to_string())
+            } else {
+                None
+            },
         });
     }
 
@@ -358,6 +390,7 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
         icon,
         image_data_url: None,
         pdf_path: None,
+        glb_path: None,
         text_head: None,
         note: Some("No preview available for this file type yet.".to_string()),
     })
@@ -1293,6 +1326,34 @@ pub async fn load_pdf_preview_data(path: String) -> Result<String, String> {
     let metadata = fs::metadata(&target).map_err(|error| error.to_string())?;
     if metadata.len() > MAX_PDF_PREVIEW_BYTES {
         return Err("PDF is too large for inline preview.".to_string());
+    }
+
+    let bytes = tokio::fs::read(&target)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(STANDARD.encode(bytes))
+}
+
+#[tauri::command]
+pub async fn load_glb_preview_data(path: String) -> Result<String, String> {
+    let home = home_directory();
+    let target = resolve_home_scoped_path(&home, &path)?;
+    if !target.is_file() {
+        return Err("path is not a file".to_string());
+    }
+    let ext = target
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+    if ext != "glb" && ext != "gltf" {
+        return Err("path is not a glb/gltf".to_string());
+    }
+
+    const MAX_GLB_PREVIEW_BYTES: u64 = 100 * 1024 * 1024;
+    let metadata = fs::metadata(&target).map_err(|error| error.to_string())?;
+    if metadata.len() > MAX_GLB_PREVIEW_BYTES {
+        return Err("GLB is too large for inline preview.".to_string());
     }
 
     let bytes = tokio::fs::read(&target)

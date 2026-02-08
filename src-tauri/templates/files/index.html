@@ -1,4 +1,5 @@
 <div id="main-root" class="files-root" data-active-tab-id="{{ active_tab_id }}">
+  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
   <style>
     #main-root.files-root {
       height: 100vh;
@@ -123,18 +124,13 @@
     }
 
     .preview-pane {
-      width: 360px;
-      min-width: 300px;
+      width: 720px;
+      min-width: 560px;
       border-left: 1px solid #404759;
       background: rgba(30, 36, 48, 0.72);
       display: flex;
       flex-direction: column;
       cursor: default;
-    }
-
-    .preview-pane.is-pdf {
-      width: 720px;
-      min-width: 560px;
     }
 
     .preview-header {
@@ -203,6 +199,15 @@
       color: #b8c5dc;
       font-size: 12px;
       margin-bottom: 8px;
+    }
+
+    .preview-model {
+      width: 100%;
+      min-height: 520px;
+      height: calc(100vh - 180px);
+      border: 1px solid #46506a;
+      border-radius: 8px;
+      background: radial-gradient(circle at 30% 20%, #3a445a 0%, #1a1f2d 100%);
     }
 
     .preview-note {
@@ -478,12 +483,13 @@
 
     {% if preview %}
     <aside
-      class="preview-pane {% if preview.kind == "pdf" %}is-pdf{% endif %}"
-      draggable="true"
+      class="preview-pane"
+      draggable="{% if preview.kind == "glb" %}false{% else %}true{% endif %}"
       data-preview-path="{{ preview.path }}"
       data-preview-name="{{ preview.title }}"
       data-preview-icon="{{ preview.icon }}"
       data-preview-is-dir="false"
+      data-preview-draggable="{% if preview.kind == "glb" %}false{% else %}true{% endif %}"
     >
       <div class="preview-header">
         <div class="preview-title">{{ preview.title }}</div>
@@ -495,6 +501,18 @@
         {% elif preview.kind == "pdf" and preview.pdf_path %}
           <div class="preview-loading" id="preview-pdf-status">Loading PDF preview...</div>
           <iframe class="preview-pdf" data-pdf-path="{{ preview.pdf_path }}" title="{{ preview.title }}" hidden></iframe>
+        {% elif preview.kind == "glb" and preview.glb_path %}
+          <div class="preview-loading" id="preview-glb-status">Loading 3D preview...</div>
+          <model-viewer
+            class="preview-model"
+            data-glb-path="{{ preview.glb_path }}"
+            camera-controls
+            touch-action="pan-y"
+            interaction-prompt="none"
+            shadow-intensity="1"
+            exposure="1"
+            hidden
+          ></model-viewer>
         {% elif preview.kind == "text" and preview.text_head %}
           <pre class="preview-text">{{ preview.text_head }}</pre>
         {% endif %}
@@ -526,19 +544,20 @@
       const root = document.getElementById("main-root");
       if (!root) return;
       let previewPdfObjectUrl = null;
+      let previewGlbObjectUrl = null;
+      const base64ToBytes = (base64) => {
+        const raw = atob(base64);
+        const bytes = new Uint8Array(raw.length);
+        for (let i = 0; i < raw.length; i += 1) {
+          bytes[i] = raw.charCodeAt(i);
+        }
+        return bytes;
+      };
       const pdfIframe = root.querySelector(".preview-pdf[data-pdf-path]");
       if (pdfIframe) {
         const rawPath = pdfIframe.getAttribute("data-pdf-path") || "";
         const status = root.querySelector("#preview-pdf-status");
         const invoke = window.__TAURI__?.core?.invoke;
-        const base64ToBytes = (base64) => {
-          const raw = atob(base64);
-          const bytes = new Uint8Array(raw.length);
-          for (let i = 0; i < raw.length; i += 1) {
-            bytes[i] = raw.charCodeAt(i);
-          }
-          return bytes;
-        };
         if (rawPath && typeof invoke === "function") {
           invoke("load_pdf_preview_data", {path: rawPath})
             .then((base64) => {
@@ -559,6 +578,46 @@
             });
         } else if (status) {
           status.textContent = "Failed to load PDF preview.";
+        }
+      }
+      const glbViewer = root.querySelector(".preview-model[data-glb-path]");
+      if (glbViewer) {
+        const rawPath = glbViewer.getAttribute("data-glb-path") || "";
+        const status = root.querySelector("#preview-glb-status");
+        const invoke = window.__TAURI__?.core?.invoke;
+        const revealViewer = () => {
+          glbViewer.hidden = false;
+          if (status) status.textContent = "";
+        };
+        if (rawPath && typeof invoke === "function") {
+          invoke("load_glb_preview_data", {path: rawPath})
+            .then((base64) => {
+              if (previewGlbObjectUrl) {
+                URL.revokeObjectURL(previewGlbObjectUrl);
+                previewGlbObjectUrl = null;
+              }
+              const bytes = base64ToBytes(base64);
+              const lowerPath = rawPath.toLowerCase();
+              const mimeType = lowerPath.endsWith(".gltf")
+                ? "model/gltf+json"
+                : "model/gltf-binary";
+              const blob = new Blob([bytes], {type: mimeType});
+              previewGlbObjectUrl = URL.createObjectURL(blob);
+              glbViewer.src = previewGlbObjectUrl;
+              if (customElements.get("model-viewer")) {
+                revealViewer();
+              } else {
+                customElements.whenDefined("model-viewer").then(revealViewer).catch(() => {
+                  if (status) status.textContent = "3D viewer failed to initialize.";
+                });
+              }
+            })
+            .catch((error) => {
+              if (status) status.textContent = String(error || "Failed to load 3D preview.");
+              glbViewer.hidden = true;
+            });
+        } else if (status) {
+          status.textContent = "Failed to load 3D preview.";
         }
       }
       const activeTabId = root.dataset.activeTabId || "default";
@@ -1336,6 +1395,7 @@
       root.addEventListener("dragstart", (event) => {
         const row = event.target.closest(".finder-row");
         const preview = event.target.closest(".preview-pane");
+        if (preview && preview.dataset.previewDraggable === "false") return;
         if (!row && !preview) return;
         if (!event.dataTransfer) return;
         dragInProgress = true;
@@ -1570,6 +1630,10 @@
           if (previewPdfObjectUrl) {
             URL.revokeObjectURL(previewPdfObjectUrl);
             previewPdfObjectUrl = null;
+          }
+          if (previewGlbObjectUrl) {
+            URL.revokeObjectURL(previewGlbObjectUrl);
+            previewGlbObjectUrl = null;
           }
           hideDropHint();
           clearDropTarget();
