@@ -58,6 +58,15 @@
       max-width: 260px;
     }
 
+    .tab-shell.sortable-chosen {
+      opacity: 0.72;
+    }
+
+    .tab-shell.sortable-ghost {
+      box-shadow: inset 0 0 0 2px #74a9ff;
+      opacity: 0.6;
+    }
+
     .tab-shell.is-active {
       background: #596277;
       border-color: #6f7990;
@@ -480,7 +489,7 @@
 
   <div class="tabs-bar">
     {% for tab in tabs %}
-    <div class="tab-shell {% if tab.is_active %}is-active{% endif %}">
+    <div class="tab-shell {% if tab.is_active %}is-active{% endif %}" data-tab-id="{{ tab.id }}">
     <button
       class="tab-button"
       type="button"
@@ -1218,6 +1227,44 @@
           swap: "outerHTML",
           values,
         });
+      const tabsBar = root.querySelector(".tabs-bar");
+      let suppressTabClickUntil = 0;
+      if (tabsBar) {
+        if (typeof window.Sortable === "function") {
+          new window.Sortable(tabsBar, {
+            draggable: ".tab-shell[data-tab-id]",
+            handle: ".tab-button",
+            filter: ".tab-close",
+            preventOnFilter: false,
+            animation: 140,
+            forceFallback: true,
+            fallbackTolerance: 3,
+            onStart: () => {
+              suppressTabClickUntil = Date.now() + 500;
+            },
+            onEnd: (event) => {
+              suppressTabClickUntil = Date.now() + 500;
+              const moved = Number(event?.oldIndex) !== Number(event?.newIndex);
+              if (!moved) return;
+              const ordered = Array.from(tabsBar.querySelectorAll(".tab-shell[data-tab-id]"))
+                .map((tab) => tab.dataset.tabId || "")
+                .filter((value) => value.length > 0);
+              htmxCommandSwap("reorder_tabs", {tabIds: ordered.join(",")});
+            },
+          });
+        }
+      }
+      root.addEventListener(
+        "click",
+        (event) => {
+          if (Date.now() > suppressTabClickUntil) return;
+          const tabShell = event.target.closest(".tab-shell[data-tab-id]");
+          if (!tabShell) return;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        },
+        true,
+      );
       const bindContextActionEvents = () => {
         const listen = window.__TAURI__?.event?.listen;
         if (typeof listen !== "function") return;

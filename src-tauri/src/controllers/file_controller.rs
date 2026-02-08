@@ -1313,6 +1313,44 @@ pub fn close_tab(state: State<'_, FileTabsState>, tab_id: String) -> String {
 }
 
 #[tauri::command]
+pub fn reorder_tabs(state: State<'_, FileTabsState>, tab_ids: String) -> String {
+    let home = home_directory();
+    let mut model = match state.tabs.lock() {
+        Ok(model) => model,
+        Err(_) => return String::new(),
+    };
+    ensure_tabs(&mut model, &home);
+
+    let requested: Vec<u64> = tab_ids
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .filter_map(|value| value.parse::<u64>().ok())
+        .collect();
+    if requested.is_empty() {
+        return render_view(&model);
+    }
+
+    let mut remaining = std::mem::take(&mut model.tabs);
+    let mut reordered: Vec<TabState> = Vec::with_capacity(remaining.len());
+
+    for id in requested {
+        if let Some(index) = remaining.iter().position(|tab| tab.id == id) {
+            reordered.push(remaining.remove(index));
+        }
+    }
+    reordered.extend(remaining);
+    model.tabs = reordered;
+
+    if !model.tabs.iter().any(|tab| tab.id == model.active_id) {
+        model.active_id = model.tabs.first().map(|tab| tab.id).unwrap_or(1);
+    }
+
+    persist_tabs_model(&model);
+    render_view(&model)
+}
+
+#[tauri::command]
 pub fn drop_files_into_directory(
     state: State<'_, FileTabsState>,
     target_dir: String,
