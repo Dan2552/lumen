@@ -1227,6 +1227,34 @@ fn resolve_home_scoped_path(home: &Path, path: &str) -> Result<PathBuf, String> 
     Ok(candidate)
 }
 
+fn resolve_location_input_path(home: &Path, path: &str) -> Result<PathBuf, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("path cannot be empty".to_string());
+    }
+
+    let candidate = if trimmed == "~" {
+        home.to_path_buf()
+    } else if let Some(rest) = trimmed.strip_prefix("~/") {
+        home.join(rest)
+    } else {
+        let raw = PathBuf::from(trimmed);
+        if raw.is_absolute() {
+            raw
+        } else {
+            home.join(raw)
+        }
+    };
+
+    if !candidate.is_absolute() {
+        return Err("path must resolve to an absolute path".to_string());
+    }
+    if !candidate.exists() {
+        return Err("Path does not exist.".to_string());
+    }
+    Ok(candidate)
+}
+
 fn validate_rename_name(new_name: &str) -> Result<String, String> {
     let trimmed = new_name.trim();
     if trimmed.is_empty() {
@@ -1340,7 +1368,7 @@ fn normalize_tab_path(home: &Path, input: Option<&str>) -> PathBuf {
         .filter(|path| !path.as_os_str().is_empty())
         .unwrap_or_else(|| home.to_path_buf());
 
-    if raw.starts_with(home) {
+    if raw.is_absolute() {
         raw
     } else {
         home.to_path_buf()
@@ -1351,7 +1379,7 @@ fn active_tab_root_path(tab: &TabState, home: &Path) -> PathBuf {
     tab.root_path
         .as_deref()
         .map(PathBuf::from)
-        .filter(|path| path.starts_with(home) && path.is_dir())
+        .filter(|path| path.is_absolute() && path.is_dir())
         .unwrap_or_else(|| home.to_path_buf())
 }
 
@@ -1541,7 +1569,7 @@ fn run_fuzzy_search_worker(
 
 fn ensure_tabs(model: &mut TabsModel, home: &Path) {
     model.directory_sorts.retain(|path, mode| {
-        PathBuf::from(path).starts_with(home) && *mode != DirectorySortMode::Alphabetical
+        PathBuf::from(path).is_absolute() && *mode != DirectorySortMode::Alphabetical
     });
 
     for tab in &mut model.tabs {
@@ -1741,6 +1769,39 @@ pub fn navigate(state: State<'_, FileTabsState>, path: String) -> String {
 
     persist_tabs_model(&model);
     render_view(&model)
+}
+
+#[tauri::command]
+pub fn validate_location_path(path: String) -> Result<String, String> {
+    let home = home_directory();
+    let target = resolve_location_input_path(&home, &path)?;
+    Ok(target.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub fn go_to_location(state: State<'_, FileTabsState>, path: String) -> Result<String, String> {
+    let home = home_directory();
+    let mut model = state
+        .tabs
+        .lock()
+        .map_err(|_| "failed to lock tabs state".to_string())?;
+    ensure_tabs(&mut model, &home);
+
+    let target = resolve_location_input_path(&home, &path)?;
+
+    if let Some(tab) = active_tab_mut(&mut model) {
+        let current_root = active_tab_root_path(tab, &home);
+        if !target.starts_with(&current_root) {
+            tab.root_path = Some("/".to_string());
+        }
+        let effective_root = active_tab_root_path(tab, &home);
+        if target.starts_with(&effective_root) {
+            tab.focus_path = Some(target.to_string_lossy().to_string());
+        }
+    }
+
+    persist_tabs_model(&model);
+    Ok(render_view(&model))
 }
 
 #[tauri::command]

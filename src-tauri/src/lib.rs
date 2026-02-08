@@ -257,6 +257,8 @@ pub fn run() {
             hold_clear_items,
             file_controller::index,
             file_controller::navigate,
+            file_controller::validate_location_path,
+            file_controller::go_to_location,
             file_controller::activate_tab,
             file_controller::new_tab,
             file_controller::close_tab,

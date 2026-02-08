@@ -486,6 +486,77 @@
       color: #ffe4e7;
     }
 
+    .goto-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(9, 12, 18, 0.52);
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding-top: 92px;
+      z-index: 1500;
+    }
+
+    .goto-modal[hidden] {
+      display: none !important;
+    }
+
+    .goto-modal-card {
+      width: min(760px, calc(100vw - 40px));
+      border-radius: 11px;
+      border: 1px solid #4b5670;
+      background: linear-gradient(180deg, #353d4e 0%, #2b3242 100%);
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
+      padding: 12px;
+    }
+
+    .goto-modal-title {
+      color: #e9eefb;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .goto-modal-input {
+      width: 100%;
+      height: 34px;
+      border-radius: 7px;
+      border: 1px solid #4f5a74;
+      background: #1d2432;
+      color: #e6edfd;
+      font: inherit;
+      font-size: 13px;
+      padding: 0 10px;
+      box-sizing: border-box;
+      outline: none;
+    }
+
+    .goto-modal-error {
+      min-height: 18px;
+      margin-top: 6px;
+      color: #ffb7bf;
+      font-size: 12px;
+    }
+
+    .goto-modal-actions {
+      margin-top: 8px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .goto-modal-button {
+      min-width: 88px;
+      height: 28px;
+      border-radius: 7px;
+      border: 1px solid #53607b;
+      background: #3c465c;
+      color: #e4ecff;
+      font: inherit;
+      font-size: 12px;
+      cursor: default;
+    }
+
     .files-search {
       position: fixed;
       inset: 0;
@@ -783,6 +854,26 @@
       </div>
     </div>
   </div>
+  <div id="goto-modal" class="goto-modal" hidden>
+    <div class="goto-modal-card" role="dialog" aria-modal="true" aria-labelledby="goto-modal-title">
+      <div class="goto-modal-title" id="goto-modal-title">Go to location</div>
+      <input
+        id="goto-modal-input"
+        class="goto-modal-input"
+        type="text"
+        placeholder="/absolute/path"
+        spellcheck="false"
+        autocorrect="off"
+        autocapitalize="off"
+        autocomplete="off"
+      />
+      <div id="goto-modal-error" class="goto-modal-error"></div>
+      <div class="goto-modal-actions">
+        <button id="goto-modal-cancel" class="goto-modal-button" type="button">Cancel</button>
+        <button id="goto-modal-go" class="goto-modal-button" type="button">Go</button>
+      </div>
+    </div>
+  </div>
 
   <script>
     (() => {
@@ -937,6 +1028,11 @@
       const searchResults = root.querySelector("#files-search-results");
       const searchPreview = root.querySelector("#files-search-preview");
       const searchInlineStatus = root.querySelector("#files-search-inline-status");
+      const gotoModal = root.querySelector("#goto-modal");
+      const gotoInput = root.querySelector("#goto-modal-input");
+      const gotoError = root.querySelector("#goto-modal-error");
+      const gotoCancel = root.querySelector("#goto-modal-cancel");
+      const gotoGo = root.querySelector("#goto-modal-go");
       let dropTargetColumn = null;
       let externalDragPaths = [];
       let externalDragPoint = null;
@@ -1432,6 +1528,7 @@
         });
       const invoke = window.__TAURI__?.core?.invoke;
       const isSearchOpen = () => !!searchRoot && !searchRoot.hidden;
+      const isGotoOpen = () => !!gotoModal && !gotoModal.hidden;
       const setSearchStatus = (message) => {
         if (searchInlineStatus) {
           searchInlineStatus.textContent = String(message || "");
@@ -1654,6 +1751,40 @@
         }
         setSearchStatus("");
       };
+      const closeGoToModal = () => {
+        if (!gotoModal) return;
+        gotoModal.hidden = true;
+        if (gotoError) gotoError.textContent = "";
+      };
+      const openGoToModal = () => {
+        if (!gotoModal || !gotoInput) return;
+        gotoModal.hidden = false;
+        if (gotoError) gotoError.textContent = "";
+        gotoInput.value = getFocusPath() || "";
+        setTimeout(() => {
+          gotoInput.focus();
+          gotoInput.select();
+        }, 0);
+      };
+      const submitGoToModal = () => {
+        if (!gotoInput || typeof invoke !== "function") return;
+        const value = String(gotoInput.value || "").trim();
+        if (!value) {
+          if (gotoError) gotoError.textContent = "Enter an absolute path.";
+          gotoInput.focus();
+          return;
+        }
+        invoke("validate_location_path", {path: value})
+          .then((normalizedPath) => {
+            closeGoToModal();
+            htmxCommandSwap("go_to_location", {path: normalizedPath});
+          })
+          .catch((error) => {
+            if (gotoError) gotoError.textContent = String(error || "Invalid path.");
+            gotoInput.focus();
+            gotoInput.select();
+          });
+      };
       const openSearchPalette = () => {
         if (!searchRoot || !searchInput) return;
         searchRoot.hidden = false;
@@ -1745,6 +1876,41 @@
             event.preventDefault();
             event.stopPropagation();
             closeSearchPalette();
+          }
+        });
+      }
+      if (gotoCancel) {
+        gotoCancel.addEventListener("click", () => {
+          closeGoToModal();
+        });
+      }
+      if (gotoGo) {
+        gotoGo.addEventListener("click", () => {
+          submitGoToModal();
+        });
+      }
+      if (gotoInput) {
+        gotoInput.addEventListener("input", () => {
+          if (gotoError) gotoError.textContent = "";
+        });
+        gotoInput.addEventListener("keydown", (event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            closeGoToModal();
+            return;
+          }
+          if (event.key === "Enter") {
+            event.preventDefault();
+            event.stopPropagation();
+            submitGoToModal();
+          }
+        });
+      }
+      if (gotoModal) {
+        gotoModal.addEventListener("click", (event) => {
+          if (event.target === gotoModal) {
+            closeGoToModal();
           }
         });
       }
@@ -2141,6 +2307,18 @@
 
       const onKeyDown = (event) => {
         const lowered = String(event.key || "").toLowerCase();
+        if ((event.metaKey || event.ctrlKey) && lowered === "g") {
+          event.preventDefault();
+          openGoToModal();
+          return;
+        }
+        if (isGotoOpen()) {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            closeGoToModal();
+          }
+          return;
+        }
         if (event.metaKey && lowered === "w") {
           event.preventDefault();
           event.stopPropagation();
