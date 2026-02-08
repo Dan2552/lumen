@@ -1890,6 +1890,20 @@
           values,
         });
       const invoke = window.__TAURI__?.core?.invoke;
+      const invokeCommandSwap = async (command, values) => {
+        if (typeof invoke !== "function") {
+          throw new Error("Tauri invoke is unavailable.");
+        }
+        const html = await invoke(command, values || {});
+        if (typeof html !== "string") {
+          throw new Error("Invalid command response.");
+        }
+        if (window.htmx?.swap) {
+          window.htmx.swap(root, html, {swapStyle: "outerHTML"});
+        } else {
+          root.outerHTML = html;
+        }
+      };
       const isSearchOpen = () => !!searchRoot && !searchRoot.hidden;
       const isGotoOpen = () => !!gotoModal && !gotoModal.hidden;
       const isCommandOpen = () => !!commandModal && !commandModal.hidden;
@@ -1980,46 +1994,82 @@
           return;
         }
         if (normalized.includes("rename")) {
-          const result = await openFilesModal({
-            title: "Rename",
-            message: "Enter a new name:",
-            confirmLabel: "Rename",
-            kind: "prompt",
-            initialValue: name,
-            selectStemOnly: true,
-          });
-          if (!result.confirmed) return;
-          const trimmed = String(result.value || "").trim();
-          if (!trimmed || trimmed === name) return;
-          htmxCommandSwap("rename_path", {path: firstPath, newName: trimmed});
+          let message = "Enter a new name:";
+          let value = name;
+          while (true) {
+            const result = await openFilesModal({
+              title: "Rename",
+              message,
+              confirmLabel: "Rename",
+              kind: "prompt",
+              initialValue: value,
+              selectStemOnly: true,
+            });
+            if (!result.confirmed) return;
+            const trimmed = String(result.value || "").trim();
+            value = trimmed || value;
+            if (!trimmed || trimmed === name) return;
+            try {
+              await invokeCommandSwap("rename_path", {path: firstPath, newName: trimmed});
+              return;
+            } catch (error) {
+              message = `Enter a new name:\n${String(error || "Rename failed.")}`;
+            }
+          }
           return;
         }
         if (normalized.includes("new_dir")) {
-          const result = await openFilesModal({
-            title: "Create Directory",
-            message: "Directory name:",
-            confirmLabel: "Create",
-            kind: "prompt",
-            initialValue: "New Folder",
-          });
-          if (!result.confirmed) return;
-          const trimmed = String(result.value || "").trim();
-          if (!trimmed) return;
-          htmxCommandSwap("create_directory", {parentPath: firstPath, name: trimmed});
+          let message = "Directory name:";
+          let value = "New Folder";
+          while (true) {
+            const result = await openFilesModal({
+              title: "Create Directory",
+              message,
+              confirmLabel: "Create",
+              kind: "prompt",
+              initialValue: value,
+            });
+            if (!result.confirmed) return;
+            const trimmed = String(result.value || "").trim();
+            if (!trimmed) {
+              message = "Directory name:\nName cannot be empty.";
+              continue;
+            }
+            value = trimmed;
+            try {
+              await invokeCommandSwap("create_directory", {parentPath: firstPath, name: trimmed});
+              return;
+            } catch (error) {
+              message = `Directory name:\n${String(error || "Create directory failed.")}`;
+            }
+          }
           return;
         }
         if (normalized.includes("new_file")) {
-          const result = await openFilesModal({
-            title: "Create File",
-            message: "File name (empty text file):",
-            confirmLabel: "Create",
-            kind: "prompt",
-            initialValue: "untitled.txt",
-          });
-          if (!result.confirmed) return;
-          const trimmed = String(result.value || "").trim();
-          if (!trimmed) return;
-          htmxCommandSwap("create_file", {parentPath: firstPath, name: trimmed});
+          let message = "File name:";
+          let value = "untitled";
+          while (true) {
+            const result = await openFilesModal({
+              title: "Create File",
+              message,
+              confirmLabel: "Create",
+              kind: "prompt",
+              initialValue: value,
+            });
+            if (!result.confirmed) return;
+            const trimmed = String(result.value || "").trim();
+            if (!trimmed) {
+              message = "File name:\nName cannot be empty.";
+              continue;
+            }
+            value = trimmed;
+            try {
+              await invokeCommandSwap("create_file", {parentPath: firstPath, name: trimmed});
+              return;
+            } catch (error) {
+              message = `File name:\n${String(error || "Create file failed.")}`;
+            }
+          }
           return;
         }
         if (normalized.includes("trash")) {
