@@ -221,10 +221,16 @@ pub fn run() {
             let menu_id = event.id().as_ref();
             if menu_id == "copy_absolute_path" {
                 let _ = app.clipboard().write_text(absolute_paths.join("\n"));
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_focus();
+                }
                 return;
             }
             if menu_id == "copy_relative_path" {
                 let _ = app.clipboard().write_text(relative_paths.join("\n"));
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_focus();
+                }
                 return;
             }
 
@@ -261,6 +267,9 @@ pub fn run() {
                         path: first_path,
                     },
                 );
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_focus();
+                }
                 return;
             }
         })
