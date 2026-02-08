@@ -1336,7 +1336,7 @@
         dropTargetColumn.classList.remove("is-drop-target");
         dropTargetColumn = null;
       };
-      const getDropOperation = () => (optionPressed ? "move" : "copy");
+      const getDropOperation = () => (optionPressed ? "copy" : "move");
       const hideDropHint = () => {
         externalDragPoint = null;
         if (dropHint) {
@@ -1396,7 +1396,7 @@
         const noun = count === 1 ? "item" : "items";
         dropHintTitle.textContent = `Drop here to ${verb.toLowerCase()} ${count} ${noun} to ${destination}`;
         dropHintSubtitle.textContent =
-          operation === "copy" ? "Hold Option to move instead" : "Release Option to copy instead";
+          operation === "move" ? "Hold Option to copy instead" : "Release Option to move instead";
       };
       const refreshAfterDrop = (targetDir) => {
         if (window.htmx?.ajax) {
@@ -2802,7 +2802,7 @@
           return;
         }
 
-        event.dataTransfer.effectAllowed = "copy";
+        event.dataTransfer.effectAllowed = "copyMove";
         event.dataTransfer.setData("text/plain", path);
         event.dataTransfer.setData("text/uri-list", `${fileUri}\r\n`);
         event.dataTransfer.setData("DownloadURL", `${mime}:${name}:${fileUri}`);
