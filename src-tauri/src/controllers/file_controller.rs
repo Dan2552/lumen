@@ -2207,6 +2207,23 @@ pub fn fuzzy_search_results(search_state: State<'_, FileSearchState>) -> String 
     render!("files/_search_results", &context)
 }
 
+#[tauri::command]
+pub fn fuzzy_search_preview(path: String) -> String {
+    let home = home_directory();
+    let resolved = match resolve_home_scoped_path(&home, &path) {
+        Ok(path) => path,
+        Err(_) => {
+            let mut context = Context::new();
+            context.insert("preview", &Option::<PreviewModel>::None);
+            return render!("files/_search_preview", &context);
+        }
+    };
+    let preview = build_preview(Some(&resolved));
+    let mut context = Context::new();
+    context.insert("preview", &preview);
+    render!("files/_search_preview", &context)
+}
+
 fn open_path_with_application(app_name: &str, path: &Path) -> Result<(), String> {
     let status = Command::new("open")
         .arg("-a")

@@ -273,6 +273,7 @@ pub fn run() {
             file_controller::fuzzy_search_start,
             file_controller::fuzzy_search_cancel,
             file_controller::fuzzy_search_results,
+            file_controller::fuzzy_search_preview,
             file_controller::load_pdf_preview_data,
             file_controller::load_glb_preview_data,
             file_controller::load_video_preview_data,

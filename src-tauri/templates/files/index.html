@@ -502,7 +502,7 @@
     }
 
     .files-search-panel {
-      width: min(760px, calc(100vw - 36px));
+      width: min(1220px, calc(100vw - 36px));
       max-height: calc(100vh - 110px);
       border: 1px solid #4a546b;
       border-radius: 11px;
@@ -511,6 +511,12 @@
       box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
       display: flex;
       flex-direction: column;
+    }
+
+    .files-search-body {
+      display: flex;
+      flex: 1;
+      min-height: 0;
     }
 
     .files-search-input-row {
@@ -549,6 +555,9 @@
       min-height: 72px;
       max-height: calc(100vh - 190px);
       padding: 6px;
+      width: 52%;
+      min-width: 340px;
+      border-right: 1px solid #3f485d;
     }
 
     .files-search-status,
@@ -566,6 +575,26 @@
 
     .files-search-meta {
       display: none;
+    }
+
+    .files-search-preview {
+      flex: 1;
+      min-width: 320px;
+      overflow: auto;
+      background: rgba(28, 33, 45, 0.55);
+    }
+
+    .search-preview-pane {
+      width: 100%;
+      min-width: 0;
+      border-left: none;
+      height: 100%;
+    }
+
+    .files-search-preview-empty {
+      color: #95a1b8;
+      font-size: 12px;
+      padding: 12px;
     }
 
     .files-search-item {
@@ -746,7 +775,12 @@
         />
         <div id="files-search-inline-status" class="files-search-inline-status"></div>
       </div>
-      <div id="files-search-results" class="files-search-results"></div>
+      <div class="files-search-body">
+        <div id="files-search-results" class="files-search-results"></div>
+        <div id="files-search-preview" class="files-search-preview">
+          <div class="files-search-preview-empty">No preview</div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -901,6 +935,7 @@
       const searchRoot = root.querySelector("#files-search");
       const searchInput = root.querySelector("#files-search-input");
       const searchResults = root.querySelector("#files-search-results");
+      const searchPreview = root.querySelector("#files-search-preview");
       const searchInlineStatus = root.querySelector("#files-search-inline-status");
       let dropTargetColumn = null;
       let externalDragPaths = [];
@@ -913,6 +948,8 @@
       let searchDebounceTimer = null;
       let searchSelectedIndex = 0;
       let searchSelectedPath = null;
+      let searchPreviewPath = null;
+      const searchPreviewObjectUrls = [];
       let lastSearchResultsHtml = "";
       window.__filesScrollStateByTab = window.__filesScrollStateByTab || {};
       const getScrollState = () => window.__filesScrollStateByTab[activeTabId] || null;
@@ -1400,6 +1437,113 @@
           searchInlineStatus.textContent = String(message || "");
         }
       };
+      const clearSearchPreviewUrls = () => {
+        while (searchPreviewObjectUrls.length > 0) {
+          const url = searchPreviewObjectUrls.pop();
+          if (url) URL.revokeObjectURL(url);
+        }
+      };
+      const initSearchPreviewMedia = () => {
+        if (!searchPreview || typeof invoke !== "function") return;
+        const pdfIframe = searchPreview.querySelector(".preview-pdf[data-pdf-path]");
+        if (pdfIframe) {
+          const rawPath = pdfIframe.getAttribute("data-pdf-path") || "";
+          const status = searchPreview.querySelector("#search-preview-pdf-status");
+          if (rawPath) {
+            invoke("load_pdf_preview_data", {path: rawPath})
+              .then((base64) => {
+                const bytes = base64ToBytes(base64);
+                const blob = new Blob([bytes], {type: "application/pdf"});
+                const url = URL.createObjectURL(blob);
+                searchPreviewObjectUrls.push(url);
+                pdfIframe.src = url;
+                pdfIframe.hidden = false;
+                if (status) status.textContent = "";
+              })
+              .catch((error) => {
+                if (status) status.textContent = String(error || "Failed to load PDF preview.");
+              });
+          }
+        }
+        const glbViewer = searchPreview.querySelector(".preview-model[data-glb-path]");
+        if (glbViewer) {
+          const rawPath = glbViewer.getAttribute("data-glb-path") || "";
+          const status = searchPreview.querySelector("#search-preview-glb-status");
+          if (rawPath) {
+            invoke("load_glb_preview_data", {path: rawPath})
+              .then((payload) => {
+                const base64 = payload?.base64 || "";
+                const mimeType = payload?.mime_type || "model/gltf-binary";
+                if (!base64) throw new Error("Empty model payload.");
+                const bytes = base64ToBytes(base64);
+                const blob = new Blob([bytes], {type: mimeType});
+                const url = URL.createObjectURL(blob);
+                searchPreviewObjectUrls.push(url);
+                glbViewer.src = url;
+                const reveal = () => {
+                  glbViewer.hidden = false;
+                  if (status) status.textContent = "";
+                };
+                if (customElements.get("model-viewer")) {
+                  reveal();
+                } else {
+                  customElements.whenDefined("model-viewer").then(reveal).catch(() => {
+                    if (status) status.textContent = "3D viewer failed to initialize.";
+                  });
+                }
+              })
+              .catch((error) => {
+                if (status) status.textContent = String(error || "Failed to load 3D preview.");
+              });
+          }
+        }
+        const videoPlayer = searchPreview.querySelector(".preview-video[data-video-path]");
+        if (videoPlayer) {
+          const rawPath = videoPlayer.getAttribute("data-video-path") || "";
+          const status = searchPreview.querySelector("#search-preview-video-status");
+          if (rawPath) {
+            invoke("load_video_preview_data", {path: rawPath})
+              .then((payload) => {
+                const base64 = payload?.base64 || "";
+                const mimeType = payload?.mime_type || "video/mp4";
+                if (!base64) throw new Error("Empty video payload.");
+                const bytes = base64ToBytes(base64);
+                const blob = new Blob([bytes], {type: mimeType});
+                const url = URL.createObjectURL(blob);
+                searchPreviewObjectUrls.push(url);
+                videoPlayer.src = url;
+                videoPlayer.hidden = false;
+                if (status) status.textContent = "";
+              })
+              .catch((error) => {
+                if (status) status.textContent = String(error || "Failed to load video preview.");
+              });
+          }
+        }
+      };
+      const requestSearchPreview = (path) => {
+        if (!searchPreview || typeof invoke !== "function") return;
+        if (!path) {
+          searchPreviewPath = null;
+          clearSearchPreviewUrls();
+          searchPreview.innerHTML = '<div class="files-search-preview-empty">No preview</div>';
+          return;
+        }
+        if (searchPreviewPath === path) return;
+        searchPreviewPath = path;
+        invoke("fuzzy_search_preview", {path})
+          .then((html) => {
+            if (!isSearchOpen() || !searchPreview || searchPreviewPath !== path) return;
+            clearSearchPreviewUrls();
+            searchPreview.innerHTML = String(html || '<div class="files-search-preview-empty">No preview</div>');
+            initSearchPreviewMedia();
+          })
+          .catch(() => {
+            if (!searchPreview || searchPreviewPath !== path) return;
+            clearSearchPreviewUrls();
+            searchPreview.innerHTML = '<div class="files-search-preview-empty">No preview</div>';
+          });
+      };
       const updateSearchInlineStatusFromResults = () => {
         if (!searchInlineStatus || !searchResults) return;
         const meta = searchResults.querySelector(".files-search-meta");
@@ -1437,6 +1581,7 @@
         const active = items[searchSelectedIndex];
         if (active) {
           searchSelectedPath = active.dataset.path || null;
+          requestSearchPreview(searchSelectedPath);
           active.scrollIntoView({block: "nearest"});
           const path = active.dataset.path || "";
           if (path) {
@@ -1502,6 +1647,11 @@
         }
         lastSearchResultsHtml = "";
         searchSelectedPath = null;
+        searchPreviewPath = null;
+        clearSearchPreviewUrls();
+        if (searchPreview) {
+          searchPreview.innerHTML = '<div class="files-search-preview-empty">No preview</div>';
+        }
         setSearchStatus("");
       };
       const openSearchPalette = () => {
@@ -1510,6 +1660,11 @@
         searchInput.value = "";
         searchSelectedIndex = 0;
         searchSelectedPath = null;
+        searchPreviewPath = null;
+        clearSearchPreviewUrls();
+        if (searchPreview) {
+          searchPreview.innerHTML = '<div class="files-search-preview-empty">No preview</div>';
+        }
         lastSearchResultsHtml = "";
         setSearchStatus("");
         requestSearch("");
@@ -2178,6 +2333,7 @@
             URL.revokeObjectURL(previewVideoObjectUrl);
             previewVideoObjectUrl = null;
           }
+          clearSearchPreviewUrls();
           hideDropHint();
           clearDropTarget();
           if (typeof dragDropUnlisten === "function") {

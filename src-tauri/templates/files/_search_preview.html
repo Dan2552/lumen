@@ -1,0 +1,58 @@
+{% if preview %}
+<aside
+  class="preview-pane search-preview-pane"
+  draggable="false"
+  data-preview-path="{{ preview.path }}"
+  data-preview-name="{{ preview.title }}"
+  data-preview-icon="{{ preview.icon }}"
+  data-preview-is-dir="false"
+  data-preview-draggable="{% if preview.kind == "glb" %}false{% else %}true{% endif %}"
+>
+  <div class="preview-header">
+    <div class="preview-title">{{ preview.title }}</div>
+    <div class="preview-subtitle">{{ preview.subtitle }}</div>
+  </div>
+  <div class="preview-body">
+    {% if preview.kind == "image" and preview.image_data_url %}
+      <img class="preview-image" src="{{ preview.image_data_url }}" alt="{{ preview.title }}">
+    {% elif (preview.kind == "affinity" or preview.kind == "blend") and preview.affinity_image_data_urls %}
+      {% if preview.affinity_image_data_urls | length == 1 and preview.image_data_url %}
+        <img class="preview-image" src="{{ preview.image_data_url }}" alt="{{ preview.title }}">
+      {% else %}
+        <div class="preview-gallery">
+          {% for image_data_url in preview.affinity_image_data_urls %}
+            <div class="preview-gallery-item">
+              <img src="{{ image_data_url }}" alt="{{ preview.title }} thumbnail {{ loop.index }}">
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% elif preview.kind == "pdf" and preview.pdf_path %}
+      <div class="preview-loading" id="search-preview-pdf-status">Loading PDF preview...</div>
+      <iframe class="preview-pdf" data-pdf-path="{{ preview.pdf_path }}" title="{{ preview.title }}" hidden></iframe>
+    {% elif preview.kind == "glb" and preview.glb_path %}
+      <div class="preview-loading" id="search-preview-glb-status">Loading 3D preview...</div>
+      <model-viewer
+        class="preview-model"
+        data-glb-path="{{ preview.glb_path }}"
+        camera-controls
+        touch-action="pan-y"
+        interaction-prompt="none"
+        shadow-intensity="1"
+        exposure="1"
+        hidden
+      ></model-viewer>
+    {% elif preview.kind == "video" and preview.video_path %}
+      <div class="preview-loading" id="search-preview-video-status">Loading video preview...</div>
+      <video class="preview-video" data-video-path="{{ preview.video_path }}" controls preload="metadata" hidden></video>
+    {% elif preview.kind == "text" and preview.text_head %}
+      <pre class="preview-text">{{ preview.text_head }}</pre>
+    {% endif %}
+    {% if preview.note %}
+      <div class="preview-note">{{ preview.note }}</div>
+    {% endif %}
+  </div>
+</aside>
+{% else %}
+<div class="files-search-preview-empty">No preview</div>
+{% endif %}
