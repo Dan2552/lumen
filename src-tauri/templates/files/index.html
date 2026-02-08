@@ -541,14 +541,18 @@
       <div class="preview-body">
         {% if preview.kind == "image" and preview.image_data_url %}
           <img class="preview-image" src="{{ preview.image_data_url }}" alt="{{ preview.title }}">
-        {% elif preview.kind == "affinity" and preview.affinity_image_data_urls %}
-          <div class="preview-gallery">
-            {% for image_data_url in preview.affinity_image_data_urls %}
-              <div class="preview-gallery-item">
-                <img src="{{ image_data_url }}" alt="{{ preview.title }} thumbnail {{ loop.index }}">
-              </div>
-            {% endfor %}
-          </div>
+        {% elif (preview.kind == "affinity" or preview.kind == "blend") and preview.affinity_image_data_urls %}
+          {% if preview.affinity_image_data_urls | length == 1 and preview.image_data_url %}
+            <img class="preview-image" src="{{ preview.image_data_url }}" alt="{{ preview.title }}">
+          {% else %}
+            <div class="preview-gallery">
+              {% for image_data_url in preview.affinity_image_data_urls %}
+                <div class="preview-gallery-item">
+                  <img src="{{ image_data_url }}" alt="{{ preview.title }} thumbnail {{ loop.index }}">
+                </div>
+              {% endfor %}
+            </div>
+          {% endif %}
         {% elif preview.kind == "pdf" and preview.pdf_path %}
           <div class="preview-loading" id="preview-pdf-status">Loading PDF preview...</div>
           <iframe class="preview-pdf" data-pdf-path="{{ preview.pdf_path }}" title="{{ preview.title }}" hidden></iframe>

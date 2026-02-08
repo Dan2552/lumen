@@ -1,7 +1,8 @@
 use serde::Serialize;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, hash_map::DefaultHasher},
     env, fs,
+    hash::{Hash, Hasher},
     io::{ErrorKind, Write},
     io::Read,
     path::{Path, PathBuf},
@@ -10,6 +11,7 @@ use std::{
     time::UNIX_EPOCH,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
+use flate2::read::GzDecoder;
 use tauri::{
     menu::MenuBuilder, AppHandle, LogicalPosition, Manager, PhysicalPosition, PhysicalSize,
     Runtime, State, Window,
@@ -257,6 +259,226 @@ fn video_mime_from_ext(ext: &str) -> Option<&'static str> {
 
 fn is_affinity_ext(ext: &str) -> bool {
     matches!(ext, "afdesign" | "afphoto" | "afpub")
+}
+
+fn read_u32_with_endian(bytes: &[u8], little_endian: bool) -> Option<u32> {
+    if bytes.len() < 4 {
+        return None;
+    }
+    let array = [bytes[0], bytes[1], bytes[2], bytes[3]];
+    Some(if little_endian {
+        u32::from_le_bytes(array)
+    } else {
+        u32::from_be_bytes(array)
+    })
+}
+
+fn encode_rgba_png(width: u32, height: u32, rgba: &[u8]) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut encoder = png::Encoder::new(&mut out, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().ok()?;
+    writer.write_image_data(rgba).ok()?;
+    drop(writer);
+    Some(out)
+}
+
+fn push_unique_preview_png(
+    previews: &mut Vec<Vec<u8>>,
+    seen: &mut std::collections::HashSet<u64>,
+    png: Vec<u8>,
+    max_count: usize,
+) {
+    if previews.len() >= max_count {
+        return;
+    }
+    let mut hasher = DefaultHasher::new();
+    png.hash(&mut hasher);
+    let digest = hasher.finish();
+    if seen.insert(digest) {
+        previews.push(png);
+    }
+}
+
+fn decode_blend_test_payload(data: &[u8], little_endian: bool) -> Vec<Vec<u8>> {
+    const MAX_BLEND_PREVIEWS: usize = 24;
+    let mut previews = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    let mut png_at = 0usize;
+    while png_at + 8 <= data.len() {
+        if let Some((png_end, _, _)) = parse_embedded_png(data, png_at) {
+            push_unique_preview_png(
+                &mut previews,
+                &mut seen,
+                data[png_at..png_end].to_vec(),
+                MAX_BLEND_PREVIEWS,
+            );
+            if previews.len() >= MAX_BLEND_PREVIEWS {
+                return previews;
+            }
+            png_at = png_end;
+            continue;
+        }
+        png_at += 1;
+    }
+
+    if !previews.is_empty() {
+        return previews;
+    }
+
+    if data.len() < 8 {
+        return previews;
+    }
+    let Some(width) = read_u32_with_endian(&data[0..4], little_endian) else {
+        return previews;
+    };
+    let Some(height) = read_u32_with_endian(&data[4..8], little_endian) else {
+        return previews;
+    };
+    if width == 0 || height == 0 || width > 8192 || height > 8192 {
+        return previews;
+    }
+    let Some(pixel_count) = (width as usize).checked_mul(height as usize) else {
+        return previews;
+    };
+    let Some(raw_len) = pixel_count.checked_mul(4) else {
+        return previews;
+    };
+    let Some(pixels_end) = 8usize.checked_add(raw_len) else {
+        return previews;
+    };
+    if pixels_end > data.len() {
+        return previews;
+    }
+    let raw = &data[8..pixels_end];
+    let mut rgba = vec![0u8; raw_len];
+    for y in 0..height as usize {
+        let src_y = height as usize - 1 - y;
+        for x in 0..width as usize {
+            let src_i = (src_y * width as usize + x) * 4;
+            let dst_i = (y * width as usize + x) * 4;
+            let b = raw[src_i];
+            let g = raw[src_i + 1];
+            let r = raw[src_i + 2];
+            let a = raw[src_i + 3];
+            rgba[dst_i] = r;
+            rgba[dst_i + 1] = g;
+            rgba[dst_i + 2] = b;
+            rgba[dst_i + 3] = a;
+        }
+    }
+    if let Some(png) = encode_rgba_png(width, height, &rgba) {
+        push_unique_preview_png(&mut previews, &mut seen, png, MAX_BLEND_PREVIEWS);
+    }
+    previews
+}
+
+fn extract_blend_preview_from_bytes(bytes: &[u8]) -> Vec<Vec<u8>> {
+    const MAX_BLEND_PREVIEWS: usize = 24;
+    let mut previews = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    if bytes.len() < 12 || &bytes[0..7] != b"BLENDER" {
+        return previews;
+    }
+
+    let pointer_size = match bytes[7] {
+        b'_' => 4usize,
+        b'-' => 8usize,
+        _ => return previews,
+    };
+    let little_endian = match bytes[8] {
+        b'v' => true,
+        b'V' => false,
+        _ => return previews,
+    };
+    let block_header_len = 4 + 4 + pointer_size + 4 + 4;
+    let mut offset = 12usize;
+
+    while offset + block_header_len <= bytes.len() {
+        let code = &bytes[offset..offset + 4];
+        let size = match read_u32_with_endian(&bytes[offset + 4..offset + 8], little_endian) {
+            Some(value) => value as usize,
+            None => break,
+        };
+        let data_start = offset + block_header_len;
+        let Some(data_end) = data_start.checked_add(size) else {
+            break;
+        };
+        if data_end > bytes.len() {
+            break;
+        }
+
+        if code == b"TEST" {
+            let data = &bytes[data_start..data_end];
+            for png in decode_blend_test_payload(data, little_endian) {
+                push_unique_preview_png(&mut previews, &mut seen, png, MAX_BLEND_PREVIEWS);
+                if previews.len() >= MAX_BLEND_PREVIEWS {
+                    return previews;
+                }
+            }
+        }
+
+        offset = data_end;
+    }
+
+    // Fallback: scan for raw TEST marker payloads even if block parsing fails on edge cases.
+    let mut idx = 12usize;
+    while idx + 4 < bytes.len() && previews.len() < MAX_BLEND_PREVIEWS {
+        if &bytes[idx..idx + 4] == b"TEST" {
+            for payload_start in [idx + 4, idx + 8, idx + 12] {
+                if payload_start >= bytes.len() || previews.len() >= MAX_BLEND_PREVIEWS {
+                    continue;
+                }
+                let data = &bytes[payload_start..];
+                for png in decode_blend_test_payload(data, little_endian) {
+                    push_unique_preview_png(&mut previews, &mut seen, png, MAX_BLEND_PREVIEWS);
+                    if previews.len() >= MAX_BLEND_PREVIEWS {
+                        break;
+                    }
+                }
+            }
+        }
+        idx += 1;
+    }
+
+    previews
+}
+
+fn maybe_gzip_decompress(bytes: &[u8]) -> Option<Vec<u8>> {
+    if bytes.len() < 2 || bytes[0] != 0x1f || bytes[1] != 0x8b {
+        return None;
+    }
+    let mut decoder = GzDecoder::new(bytes);
+    let mut out = Vec::new();
+    decoder.read_to_end(&mut out).ok()?;
+    Some(out)
+}
+
+fn extract_blend_preview_pngs(path: &Path) -> Vec<Vec<u8>> {
+    const MAX_BLEND_SCAN_BYTES: usize = 512 * 1024 * 1024;
+    let Ok(file) = fs::File::open(path) else {
+        return Vec::new();
+    };
+    let mut bytes = Vec::new();
+    if file
+        .take(MAX_BLEND_SCAN_BYTES as u64)
+        .read_to_end(&mut bytes)
+        .is_err()
+    {
+        return Vec::new();
+    }
+
+    let previews = extract_blend_preview_from_bytes(&bytes);
+    if !previews.is_empty() {
+        return previews;
+    }
+    if let Some(inflated) = maybe_gzip_decompress(&bytes) {
+        return extract_blend_preview_from_bytes(&inflated);
+    }
+    Vec::new()
 }
 
 fn parse_embedded_png(bytes: &[u8], start: usize) -> Option<(usize, u32, u32)> {
@@ -512,6 +734,45 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
         .and_then(|value| value.to_str())
         .map(|value| value.to_ascii_lowercase())
         .unwrap_or_default();
+
+    if ext == "blend" {
+        let pngs = extract_blend_preview_pngs(path);
+        if !pngs.is_empty() {
+            let mut data_urls: Vec<String> = pngs
+                .into_iter()
+                .map(|png| format!("data:image/png;base64,{}", STANDARD.encode(png)))
+                .collect();
+            let first = data_urls.first().cloned();
+            return Some(PreviewModel {
+                kind: "blend".to_string(),
+                title: file_name,
+                subtitle,
+                path: path.to_string_lossy().to_string(),
+                icon,
+                image_data_url: first,
+                affinity_image_data_urls: Some(std::mem::take(&mut data_urls)),
+                pdf_path: None,
+                glb_path: None,
+                video_path: None,
+                text_head: None,
+                note: Some("Embedded Blender thumbnails.".to_string()),
+            });
+        }
+        return Some(PreviewModel {
+            kind: "unknown".to_string(),
+            title: file_name,
+            subtitle,
+            path: path.to_string_lossy().to_string(),
+            icon,
+            image_data_url: None,
+            affinity_image_data_urls: None,
+            pdf_path: None,
+            glb_path: None,
+            video_path: None,
+            text_head: None,
+            note: Some("No embedded Blender thumbnail found.".to_string()),
+        });
+    }
 
     if is_affinity_ext(&ext) {
         if let Some(pngs) = extract_affinity_embedded_pngs(path) {
