@@ -782,6 +782,13 @@ fn should_show_default_open_for_file(path: &Path) -> bool {
     !is_previewable_text_ext(&ext)
 }
 
+fn is_git_repository_dir(path: &Path) -> bool {
+    if !path.is_dir() {
+        return false;
+    }
+    path.join(".git").exists()
+}
+
 fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
     let path = focus_path?;
     if !path.is_file() {
@@ -1913,6 +1920,7 @@ pub fn show_file_context_menu(
     let path_buf = PathBuf::from(&path);
     let relative_path = relative_path_from_root(&path_buf, &root);
     let show_default_open = should_show_default_open_for_file(&path_buf);
+    let show_github_desktop = is_dir && is_git_repository_dir(&path_buf);
 
     let mut pending = state
         .pending
@@ -1933,8 +1941,11 @@ pub fn show_file_context_menu(
             .text("ctx_set_tab_root", "Set as current tab root")
             .separator()
             .text("ctx_open_warp", "Open in Warp")
-            .text("ctx_open_zed", "Open in Zed")
-            .separator();
+            .text("ctx_open_zed", "Open in Zed");
+        if show_github_desktop {
+            builder = builder.text("ctx_open_github_desktop", "Open in GitHub Desktop");
+        }
+        builder = builder.separator();
     } else {
         if show_default_open {
             builder = builder.text("ctx_open_default", "Open");
@@ -2367,6 +2378,16 @@ pub fn open_in_warp(path: String) -> Result<(), String> {
         return Err("warp can only open directories".to_string());
     }
     open_path_with_application("Warp", &target)
+}
+
+#[tauri::command]
+pub fn open_in_github_desktop(path: String) -> Result<(), String> {
+    let home = home_directory();
+    let target = resolve_home_scoped_path(&home, &path)?;
+    if !target.is_dir() {
+        return Err("github desktop can only open directories".to_string());
+    }
+    open_path_with_application("GitHub Desktop", &target)
 }
 
 #[tauri::command]

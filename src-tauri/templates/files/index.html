@@ -1828,6 +1828,16 @@
               }
               return;
             }
+            if (normalized.includes("open_github_desktop")) {
+              logNav("context open github desktop", {path});
+              const invoke = window.__TAURI__?.core?.invoke;
+              if (typeof invoke === "function") {
+                invoke("open_in_github_desktop", {path}).catch((error) => {
+                  logNav("open_in_github_desktop failed", {path, error: String(error)});
+                });
+              }
+              return;
+            }
             if (normalized.includes("set_tab_root")) {
               logNav("context set tab root", {path});
               htmxCommandSwap("set_tab_root", {path});
