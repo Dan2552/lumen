@@ -331,51 +331,57 @@ fn decode_blend_test_payload(data: &[u8], little_endian: bool) -> Vec<Vec<u8>> {
     if data.len() < 8 {
         return previews;
     }
-    let Some(width) = read_u32_with_endian(&data[0..4], little_endian) else {
-        return previews;
-    };
-    let Some(height) = read_u32_with_endian(&data[4..8], little_endian) else {
-        return previews;
-    };
-    if width == 0 || height == 0 || width > 8192 || height > 8192 {
-        return previews;
-    }
-    let Some(pixel_count) = (width as usize).checked_mul(height as usize) else {
-        return previews;
-    };
-    let Some(raw_len) = pixel_count.checked_mul(4) else {
-        return previews;
-    };
-    let Some(pixels_end) = 8usize.checked_add(raw_len) else {
-        return previews;
-    };
-    if pixels_end > data.len() {
-        return previews;
-    }
-    let raw = &data[8..pixels_end];
-    let mut rgba = vec![0u8; raw_len];
-    for y in 0..height as usize {
-        let src_y = height as usize - 1 - y;
-        for x in 0..width as usize {
-            let src_i = (src_y * width as usize + x) * 4;
-            let dst_i = (y * width as usize + x) * 4;
-            let b = raw[src_i];
-            let g = raw[src_i + 1];
-            let r = raw[src_i + 2];
-            let a = raw[src_i + 3];
-            rgba[dst_i] = r;
-            rgba[dst_i + 1] = g;
-            rgba[dst_i + 2] = b;
-            rgba[dst_i + 3] = a;
+    let endianness_candidates = [little_endian, !little_endian];
+    for candidate_endian in endianness_candidates {
+        let Some(width) = read_u32_with_endian(&data[0..4], candidate_endian) else {
+            continue;
+        };
+        let Some(height) = read_u32_with_endian(&data[4..8], candidate_endian) else {
+            continue;
+        };
+        if width == 0 || height == 0 || width > 8192 || height > 8192 {
+            continue;
         }
-    }
-    if let Some(png) = encode_rgba_png(width, height, &rgba) {
-        push_unique_preview_png(&mut previews, &mut seen, png, MAX_BLEND_PREVIEWS);
+        let Some(pixel_count) = (width as usize).checked_mul(height as usize) else {
+            continue;
+        };
+        let Some(raw_len) = pixel_count.checked_mul(4) else {
+            continue;
+        };
+        let Some(pixels_end) = 8usize.checked_add(raw_len) else {
+            continue;
+        };
+        if pixels_end > data.len() {
+            continue;
+        }
+        let raw = &data[8..pixels_end];
+        let mut rgba = vec![0u8; raw_len];
+        for y in 0..height as usize {
+            let src_y = height as usize - 1 - y;
+            for x in 0..width as usize {
+                let src_i = (src_y * width as usize + x) * 4;
+                let dst_i = (y * width as usize + x) * 4;
+                let b = raw[src_i];
+                let g = raw[src_i + 1];
+                let r = raw[src_i + 2];
+                let a = raw[src_i + 3];
+                rgba[dst_i] = r;
+                rgba[dst_i + 1] = g;
+                rgba[dst_i + 2] = b;
+                rgba[dst_i + 3] = a;
+            }
+        }
+        if let Some(png) = encode_rgba_png(width, height, &rgba) {
+            push_unique_preview_png(&mut previews, &mut seen, png, MAX_BLEND_PREVIEWS);
+        }
+        if previews.len() >= MAX_BLEND_PREVIEWS {
+            break;
+        }
     }
     previews
 }
 
-fn extract_blend_preview_from_bytes(bytes: &[u8]) -> Vec<Vec<u8>> {
+fn extract_blend_preview_from_bytes_with_mode(bytes: &[u8], align_blocks_to_4: bool) -> Vec<Vec<u8>> {
     const MAX_BLEND_PREVIEWS: usize = 24;
     let mut previews = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -399,6 +405,9 @@ fn extract_blend_preview_from_bytes(bytes: &[u8]) -> Vec<Vec<u8>> {
 
     while offset + block_header_len <= bytes.len() {
         let code = &bytes[offset..offset + 4];
+        if code == b"ENDB" {
+            break;
+        }
         let size = match read_u32_with_endian(&bytes[offset + 4..offset + 8], little_endian) {
             Some(value) => value as usize,
             None => break,
@@ -421,10 +430,18 @@ fn extract_blend_preview_from_bytes(bytes: &[u8]) -> Vec<Vec<u8>> {
             }
         }
 
-        offset = data_end;
+        let next_offset = if align_blocks_to_4 {
+            data_end.saturating_add(3) & !3
+        } else {
+            data_end
+        };
+        if next_offset <= offset {
+            break;
+        }
+        offset = next_offset;
     }
 
-    // Fallback: scan for raw TEST marker payloads even if block parsing fails on edge cases.
+    // Fallback: scan for raw TEST marker payloads even if block parsing misses edge cases.
     let mut idx = 12usize;
     while idx + 4 < bytes.len() && previews.len() < MAX_BLEND_PREVIEWS {
         if &bytes[idx..idx + 4] == b"TEST" {
@@ -444,6 +461,14 @@ fn extract_blend_preview_from_bytes(bytes: &[u8]) -> Vec<Vec<u8>> {
         idx += 1;
     }
 
+    previews
+}
+
+fn extract_blend_preview_from_bytes(bytes: &[u8]) -> Vec<Vec<u8>> {
+    let mut previews = extract_blend_preview_from_bytes_with_mode(bytes, false);
+    if previews.is_empty() {
+        previews = extract_blend_preview_from_bytes_with_mode(bytes, true);
+    }
     previews
 }
 
