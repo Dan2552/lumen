@@ -1,0 +1,26 @@
+{% if query == "" %}
+<div class="files-search-meta" data-running="false" data-scanned="0" data-query=""></div>
+<div class="files-search-empty">Type to search files...</div>
+{% else %}
+  <div
+    class="files-search-meta"
+    data-running="{% if running %}true{% else %}false{% endif %}"
+    data-scanned="{{ scanned }}"
+    data-query="{{ query }}"
+  ></div>
+  {% if not running and results | length == 0 %}
+  <div class="files-search-empty">No matches</div>
+  {% endif %}
+
+  {% if results | length > 0 %}
+  <div class="files-search-list">
+    {% for item in results %}
+    <button class="files-search-item" type="button" data-path="{{ item.path }}" data-index="{{ loop.index0 }}">
+      <i class="row-icon icon-{{ item.icon }}" aria-hidden="true"></i>
+      <span class="files-search-item-name">{{ item.name }}</span>
+      <span class="files-search-item-path">{{ item.relative_path }}</span>
+    </button>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endif %}

@@ -7,7 +7,7 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
     process::Command,
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::UNIX_EPOCH,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -62,6 +62,43 @@ struct TabView {
     id: String,
     title: String,
     is_active: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct SearchResultItem {
+    path: String,
+    relative_path: String,
+    name: String,
+    icon: &'static str,
+}
+
+#[derive(Debug)]
+struct SearchModel {
+    generation: u64,
+    query: String,
+    root_path: String,
+    running: bool,
+    scanned: u64,
+    results: Vec<SearchResultItem>,
+}
+
+pub struct FileSearchState {
+    search: Arc<Mutex<SearchModel>>,
+}
+
+impl Default for FileSearchState {
+    fn default() -> Self {
+        Self {
+            search: Arc::new(Mutex::new(SearchModel {
+                generation: 0,
+                query: String::new(),
+                root_path: String::new(),
+                running: false,
+                scanned: 0,
+                results: Vec::new(),
+            })),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1351,6 +1388,150 @@ fn relative_path_from_root(path: &Path, root: &Path) -> String {
         .unwrap_or_else(|| path.to_string_lossy().to_string())
 }
 
+fn fuzzy_score(haystack: &str, needle: &str) -> Option<i64> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    let mut score = 0i64;
+    let mut last_index: Option<usize> = None;
+    let mut search_from = 0usize;
+    let hay_chars: Vec<char> = haystack.chars().collect();
+    let needle_chars: Vec<char> = needle.chars().collect();
+
+    for &needle_char in &needle_chars {
+        let mut found = None;
+        for index in search_from..hay_chars.len() {
+            if hay_chars[index] == needle_char {
+                found = Some(index);
+                break;
+            }
+        }
+        let index = found?;
+        score += 8;
+        if let Some(last) = last_index {
+            if index == last + 1 {
+                score += 14;
+            } else {
+                let gap = (index - last - 1) as i64;
+                score -= gap.min(12);
+            }
+        } else if index == 0 || matches!(hay_chars.get(index.saturating_sub(1)), Some('/' | '_' | '-' | ' ' | '.')) {
+            score += 18;
+        }
+        last_index = Some(index);
+        search_from = index + 1;
+    }
+
+    Some(score - (hay_chars.len() as i64 / 3))
+}
+
+fn push_ranked_result(
+    ranked: &mut Vec<(i64, SearchResultItem)>,
+    score: i64,
+    item: SearchResultItem,
+    max_results: usize,
+) {
+    ranked.push((score, item));
+    if ranked.len() > max_results * 4 {
+        ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.relative_path.cmp(&b.1.relative_path)));
+        ranked.truncate(max_results);
+    }
+}
+
+fn sorted_ranked_results(ranked: &[(i64, SearchResultItem)], max_results: usize) -> Vec<SearchResultItem> {
+    let mut items = ranked.to_vec();
+    items.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.relative_path.cmp(&b.1.relative_path)));
+    items.truncate(max_results);
+    items.into_iter().map(|(_, item)| item).collect()
+}
+
+fn run_fuzzy_search_worker(
+    shared: Arc<Mutex<SearchModel>>,
+    generation: u64,
+    root: PathBuf,
+    query: String,
+) {
+    const MAX_RESULTS: usize = 200;
+    const FLUSH_EVERY: u64 = 40;
+    let query_lower = query.to_ascii_lowercase();
+    let mut stack = vec![root.clone()];
+    let mut scanned = 0u64;
+    let mut ranked: Vec<(i64, SearchResultItem)> = Vec::new();
+
+    while let Some(directory) = stack.pop() {
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue;
+            }
+            scanned += 1;
+            let metadata = match entry.metadata() {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            let is_dir = metadata.is_dir();
+            if is_dir {
+                stack.push(path.clone());
+            }
+            let relative = path
+                .strip_prefix(&root)
+                .ok()
+                .map(|value| value.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.to_string_lossy().to_string());
+            let relative_lower = relative.to_ascii_lowercase();
+            let name_lower = name.to_ascii_lowercase();
+            let name_score = fuzzy_score(&name_lower, &query_lower);
+            let path_score = fuzzy_score(&relative_lower, &query_lower);
+            let combined = match (name_score, path_score) {
+                (Some(a), Some(b)) => Some(a.max(b + 10)),
+                (Some(a), None) => Some(a + 8),
+                (None, Some(b)) => Some(b),
+                (None, None) => None,
+            };
+            if let Some(score) = combined {
+                let icon = icon_for_entry(&name, is_dir);
+                push_ranked_result(
+                    &mut ranked,
+                    score,
+                    SearchResultItem {
+                        path: path.to_string_lossy().to_string(),
+                        relative_path: relative,
+                        name,
+                        icon,
+                    },
+                    MAX_RESULTS,
+                );
+            }
+
+            if scanned % FLUSH_EVERY == 0 {
+                let Ok(mut model) = shared.lock() else {
+                    return;
+                };
+                if model.generation != generation {
+                    return;
+                }
+                model.scanned = scanned;
+                model.results = sorted_ranked_results(&ranked, MAX_RESULTS);
+            }
+        }
+    }
+
+    let Ok(mut model) = shared.lock() else {
+        return;
+    };
+    if model.generation != generation {
+        return;
+    }
+    model.scanned = scanned;
+    model.running = false;
+    model.results = sorted_ranked_results(&ranked, MAX_RESULTS);
+}
+
 fn ensure_tabs(model: &mut TabsModel, home: &Path) {
     model.directory_sorts.retain(|path, mode| {
         PathBuf::from(path).starts_with(home) && *mode != DirectorySortMode::Alphabetical
@@ -1942,6 +2123,88 @@ pub fn set_directory_sort(
 
     persist_tabs_model(&model);
     Ok(render_view(&model))
+}
+
+#[tauri::command]
+pub fn fuzzy_search_start(
+    tabs_state: State<'_, FileTabsState>,
+    search_state: State<'_, FileSearchState>,
+    query: String,
+) -> Result<(), String> {
+    let home = home_directory();
+    let mut tabs = tabs_state
+        .tabs
+        .lock()
+        .map_err(|_| "failed to lock tabs state".to_string())?;
+    ensure_tabs(&mut tabs, &home);
+    let active_tab = tabs
+        .tabs
+        .iter()
+        .find(|tab| tab.id == tabs.active_id)
+        .or_else(|| tabs.tabs.first())
+        .ok_or_else(|| "missing active tab".to_string())?;
+    let root = active_tab_root_path(active_tab, &home);
+    drop(tabs);
+
+    let trimmed = query.trim().to_string();
+    let shared = search_state.search.clone();
+    let generation = {
+        let mut search = shared
+            .lock()
+            .map_err(|_| "failed to lock search state".to_string())?;
+        search.generation = search.generation.saturating_add(1);
+        search.query = trimmed.clone();
+        search.root_path = root.to_string_lossy().to_string();
+        search.running = !trimmed.is_empty();
+        search.scanned = 0;
+        search.results.clear();
+        search.generation
+    };
+
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+
+    std::thread::spawn(move || {
+        run_fuzzy_search_worker(shared, generation, root, trimmed);
+    });
+    Ok(())
+}
+
+#[tauri::command]
+pub fn fuzzy_search_cancel(search_state: State<'_, FileSearchState>) -> Result<(), String> {
+    let mut search = search_state
+        .search
+        .lock()
+        .map_err(|_| "failed to lock search state".to_string())?;
+    search.generation = search.generation.saturating_add(1);
+    search.query.clear();
+    search.running = false;
+    search.scanned = 0;
+    search.results.clear();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn fuzzy_search_results(search_state: State<'_, FileSearchState>) -> String {
+    let (query, running, scanned, results) = {
+        let Ok(search) = search_state.search.lock() else {
+            return String::new();
+        };
+        (
+            search.query.clone(),
+            search.running,
+            search.scanned,
+            search.results.clone(),
+        )
+    };
+
+    let mut context = Context::new();
+    context.insert("query", &query);
+    context.insert("running", &running);
+    context.insert("scanned", &scanned);
+    context.insert("results", &results);
+    render!("files/_search_results", &context)
 }
 
 fn open_path_with_application(app_name: &str, path: &Path) -> Result<(), String> {

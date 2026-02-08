@@ -485,6 +485,132 @@
       background: #6f3037;
       color: #ffe4e7;
     }
+
+    .files-search {
+      position: fixed;
+      inset: 0;
+      z-index: 1400;
+      background: rgba(10, 13, 20, 0.45);
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding-top: 56px;
+    }
+
+    .files-search[hidden] {
+      display: none !important;
+    }
+
+    .files-search-panel {
+      width: min(760px, calc(100vw - 36px));
+      max-height: calc(100vh - 110px);
+      border: 1px solid #4a546b;
+      border-radius: 11px;
+      overflow: hidden;
+      background: linear-gradient(180deg, #323a4a 0%, #2a3140 100%);
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .files-search-input-row {
+      height: 42px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 0 10px;
+      background: rgba(19, 23, 32, 0.9);
+      border-bottom: 1px solid #3f485d;
+    }
+
+    .files-search-input {
+      height: 42px;
+      border: none;
+      outline: none;
+      padding: 0 2px;
+      background: transparent;
+      color: #e7ecf8;
+      font: inherit;
+      font-size: 14px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .files-search-inline-status {
+      flex-shrink: 0;
+      color: #95a1b8;
+      font-size: 11px;
+      min-width: 120px;
+      text-align: right;
+    }
+
+    .files-search-results {
+      overflow: auto;
+      min-height: 72px;
+      max-height: calc(100vh - 190px);
+      padding: 6px;
+    }
+
+    .files-search-status,
+    .files-search-empty {
+      color: #aab6cd;
+      font-size: 12px;
+      padding: 8px 10px;
+    }
+
+    .files-search-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .files-search-meta {
+      display: none;
+    }
+
+    .files-search-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      min-height: 30px;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      background: transparent;
+      color: #d4dbea;
+      text-align: left;
+      padding: 4px 8px;
+      font: inherit;
+      cursor: default;
+    }
+
+    .files-search-item.is-active {
+      background: linear-gradient(180deg, #2f6fce 0%, #2060c4 100%);
+      border-color: rgba(147, 192, 255, 0.85);
+      color: #eaf2ff;
+    }
+
+    .files-search-item-name {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .files-search-item-path {
+      margin-left: auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #8f9bb3;
+      font-size: 11px;
+      max-width: 56%;
+    }
+
+    .files-search-item.is-active .files-search-item-path {
+      color: #cfe0ff;
+    }
   </style>
 
   <div class="tabs-bar">
@@ -603,6 +729,24 @@
         <button id="files-modal-cancel" class="files-modal-button" type="button">Cancel</button>
         <button id="files-modal-confirm" class="files-modal-button" type="button">OK</button>
       </div>
+    </div>
+  </div>
+  <div id="files-search" class="files-search" hidden>
+    <div class="files-search-panel">
+      <div class="files-search-input-row">
+        <input
+          id="files-search-input"
+          class="files-search-input"
+          type="text"
+          placeholder="Search files..."
+          spellcheck="false"
+          autocorrect="off"
+          autocapitalize="off"
+          autocomplete="off"
+        />
+        <div id="files-search-inline-status" class="files-search-inline-status"></div>
+      </div>
+      <div id="files-search-results" class="files-search-results"></div>
     </div>
   </div>
 
@@ -754,6 +898,10 @@
       const modalInput = root.querySelector("#files-modal-input");
       const modalCancel = root.querySelector("#files-modal-cancel");
       const modalConfirm = root.querySelector("#files-modal-confirm");
+      const searchRoot = root.querySelector("#files-search");
+      const searchInput = root.querySelector("#files-search-input");
+      const searchResults = root.querySelector("#files-search-results");
+      const searchInlineStatus = root.querySelector("#files-search-inline-status");
       let dropTargetColumn = null;
       let externalDragPaths = [];
       let externalDragPoint = null;
@@ -761,6 +909,11 @@
       let contextActionUnlisten = null;
       let optionPressed = false;
       let modalResolve = null;
+      let searchPollTimer = null;
+      let searchDebounceTimer = null;
+      let searchSelectedIndex = 0;
+      let searchSelectedPath = null;
+      let lastSearchResultsHtml = "";
       window.__filesScrollStateByTab = window.__filesScrollStateByTab || {};
       const getScrollState = () => window.__filesScrollStateByTab[activeTabId] || null;
       const saveScrollState = () => {
@@ -1240,6 +1393,205 @@
           swap: "outerHTML",
           values,
         });
+      const invoke = window.__TAURI__?.core?.invoke;
+      const isSearchOpen = () => !!searchRoot && !searchRoot.hidden;
+      const setSearchStatus = (message) => {
+        if (searchInlineStatus) {
+          searchInlineStatus.textContent = String(message || "");
+        }
+      };
+      const updateSearchInlineStatusFromResults = () => {
+        if (!searchInlineStatus || !searchResults) return;
+        const meta = searchResults.querySelector(".files-search-meta");
+        if (!meta) {
+          searchInlineStatus.textContent = "";
+          return;
+        }
+        const running = (meta.getAttribute("data-running") || "false") === "true";
+        const scanned = Number(meta.getAttribute("data-scanned") || 0);
+        searchInlineStatus.textContent = running ? `Searching... ${scanned}` : "";
+      };
+      if (searchRoot) {
+        searchRoot.hidden = true;
+      }
+      const getSearchItems = () =>
+        searchResults ? Array.from(searchResults.querySelectorAll(".files-search-item[data-path]")) : [];
+      const applySearchSelection = () => {
+        const items = getSearchItems();
+        if (items.length === 0) {
+          searchSelectedIndex = 0;
+          searchSelectedPath = null;
+          return;
+        }
+        if (searchSelectedPath) {
+          const byPathIndex = items.findIndex((item) => (item.dataset.path || "") === searchSelectedPath);
+          if (byPathIndex >= 0) {
+            searchSelectedIndex = byPathIndex;
+          }
+        }
+        if (searchSelectedIndex < 0) searchSelectedIndex = 0;
+        if (searchSelectedIndex >= items.length) searchSelectedIndex = items.length - 1;
+        items.forEach((item, index) => {
+          item.classList.toggle("is-active", index === searchSelectedIndex);
+        });
+        const active = items[searchSelectedIndex];
+        if (active) {
+          searchSelectedPath = active.dataset.path || null;
+          active.scrollIntoView({block: "nearest"});
+          const path = active.dataset.path || "";
+          if (path) {
+            const row = rows.find((candidate) => candidate.dataset.path === path) || null;
+            if (row) {
+              setFocusPath(path);
+              setRowSelectedLocally(row);
+              setActiveColumn(Number(row.dataset.column || 0));
+            }
+          }
+        }
+      };
+      const pollSearchResults = () => {
+        if (!isSearchOpen() || !searchResults || typeof invoke !== "function") return;
+        invoke("fuzzy_search_results")
+          .then((html) => {
+            if (!isSearchOpen() || !searchResults) return;
+            const nextHtml = String(html || "");
+            if (nextHtml !== lastSearchResultsHtml) {
+              searchResults.innerHTML = nextHtml;
+              lastSearchResultsHtml = nextHtml;
+            }
+            updateSearchInlineStatusFromResults();
+            applySearchSelection();
+          })
+          .catch((error) => {
+            setSearchStatus(`Search poll failed: ${String(error || "unknown error")}`);
+            logNav("fuzzy_search_results failed", {error: String(error)});
+          });
+      };
+      const startSearchPolling = () => {
+        if (!searchResults) return;
+        if (searchPollTimer) clearInterval(searchPollTimer);
+        searchPollTimer = setInterval(() => {
+          pollSearchResults();
+        }, 220);
+      };
+      const stopSearchPolling = () => {
+        if (searchPollTimer) {
+          clearInterval(searchPollTimer);
+          searchPollTimer = null;
+        }
+      };
+      const requestSearch = (query) => {
+        if (typeof invoke !== "function") return;
+        invoke("fuzzy_search_start", {query}).then(() => {
+          pollSearchResults();
+        }).catch((error) => {
+          setSearchStatus(`Search failed: ${String(error || "unknown error")}`);
+          logNav("fuzzy_search_start failed", {error: String(error)});
+        });
+      };
+      const closeSearchPalette = () => {
+        if (!searchRoot) return;
+        searchRoot.hidden = true;
+        stopSearchPolling();
+        if (searchDebounceTimer) {
+          clearTimeout(searchDebounceTimer);
+          searchDebounceTimer = null;
+        }
+        if (typeof invoke === "function") {
+          invoke("fuzzy_search_cancel").catch(() => {});
+        }
+        lastSearchResultsHtml = "";
+        searchSelectedPath = null;
+        setSearchStatus("");
+      };
+      const openSearchPalette = () => {
+        if (!searchRoot || !searchInput) return;
+        searchRoot.hidden = false;
+        searchInput.value = "";
+        searchSelectedIndex = 0;
+        searchSelectedPath = null;
+        lastSearchResultsHtml = "";
+        setSearchStatus("");
+        requestSearch("");
+        startSearchPolling();
+        pollSearchResults();
+        setTimeout(() => {
+          searchInput.focus();
+          searchInput.select();
+        }, 0);
+      };
+      const openSearchSelection = () => {
+        const items = getSearchItems();
+        if (items.length === 0) return;
+        const selected = items[searchSelectedIndex] || items[0];
+        const path = selected?.dataset?.path || "";
+        if (!path) return;
+        closeSearchPalette();
+        htmxCommandSwap("navigate", {path});
+      };
+      if (searchInput) {
+        searchInput.addEventListener("keydown", (event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            closeSearchPalette();
+            return;
+          }
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
+            event.stopPropagation();
+            searchSelectedIndex += 1;
+            searchSelectedPath = null;
+            applySearchSelection();
+            return;
+          }
+          if (event.key === "ArrowUp") {
+            event.preventDefault();
+            event.stopPropagation();
+            searchSelectedIndex -= 1;
+            searchSelectedPath = null;
+            applySearchSelection();
+            return;
+          }
+          if (event.key === "Enter") {
+            event.preventDefault();
+            event.stopPropagation();
+            openSearchSelection();
+          }
+        });
+        searchInput.addEventListener("input", () => {
+          if (searchDebounceTimer) {
+            clearTimeout(searchDebounceTimer);
+          }
+          searchDebounceTimer = setTimeout(() => {
+            searchSelectedIndex = 0;
+            searchSelectedPath = null;
+            requestSearch(searchInput.value || "");
+          }, 90);
+        });
+      }
+      if (searchResults) {
+        searchResults.addEventListener("click", (event) => {
+          const item = event.target.closest(".files-search-item[data-path]");
+          if (!item) return;
+          const items = getSearchItems();
+          const index = items.findIndex((candidate) => candidate === item);
+          if (index >= 0) {
+            searchSelectedIndex = index;
+            searchSelectedPath = item.dataset.path || null;
+          }
+          openSearchSelection();
+        });
+      }
+      if (searchRoot) {
+        searchRoot.addEventListener("click", (event) => {
+          if (event.target === searchRoot) {
+            event.preventDefault();
+            event.stopPropagation();
+            closeSearchPalette();
+          }
+        });
+      }
       const tabsBar = root.querySelector(".tabs-bar");
       let suppressTabClickUntil = 0;
       if (tabsBar) {
@@ -1622,6 +1974,40 @@
       }
 
       const onKeyDown = (event) => {
+        const lowered = String(event.key || "").toLowerCase();
+        if ((event.metaKey || event.ctrlKey) && (lowered === "p" || lowered === "t")) {
+          event.preventDefault();
+          openSearchPalette();
+          return;
+        }
+        if (isSearchOpen()) {
+          if (searchInput && document.activeElement !== searchInput) {
+            searchInput.focus({preventScroll: true});
+          }
+          if (event.key === "Escape") {
+            event.preventDefault();
+            closeSearchPalette();
+            return;
+          }
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
+            searchSelectedIndex += 1;
+            applySearchSelection();
+            return;
+          }
+          if (event.key === "ArrowUp") {
+            event.preventDefault();
+            searchSelectedIndex -= 1;
+            applySearchSelection();
+            return;
+          }
+          if (event.key === "Enter") {
+            event.preventDefault();
+            openSearchSelection();
+            return;
+          }
+          return;
+        }
         if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
 
         const activeTag = document.activeElement?.tagName || "";
@@ -1775,7 +2161,10 @@
       });
       root.addEventListener(
         "htmx:beforeCleanupElement",
-        () => {
+        (event) => {
+          if (event.target !== root) {
+            return;
+          }
           if (previewPdfObjectUrl) {
             URL.revokeObjectURL(previewPdfObjectUrl);
             previewPdfObjectUrl = null;
@@ -1797,6 +2186,14 @@
           if (typeof contextActionUnlisten === "function") {
             contextActionUnlisten();
             contextActionUnlisten = null;
+          }
+          stopSearchPolling();
+          if (searchDebounceTimer) {
+            clearTimeout(searchDebounceTimer);
+            searchDebounceTimer = null;
+          }
+          if (typeof invoke === "function") {
+            invoke("fuzzy_search_cancel").catch(() => {});
           }
           saveScrollState();
           document.removeEventListener("keydown", onKeyDown);

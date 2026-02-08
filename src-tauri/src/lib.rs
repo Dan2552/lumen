@@ -158,6 +158,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(file_controller::FileTabsState::default())
         .manage(file_controller::FileContextMenuState::default())
+        .manage(file_controller::FileSearchState::default())
         .manage(HoldState::default())
         .setup(|app| {
             file_controller::restore_main_window_state(&app.handle());
@@ -269,6 +270,9 @@ pub fn run() {
             file_controller::create_file,
             file_controller::set_directory_sort,
             file_controller::set_tab_root,
+            file_controller::fuzzy_search_start,
+            file_controller::fuzzy_search_cancel,
+            file_controller::fuzzy_search_results,
             file_controller::load_pdf_preview_data,
             file_controller::load_glb_preview_data,
             file_controller::load_video_preview_data,
