@@ -178,6 +178,11 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| match event {
+            tauri::WindowEvent::CloseRequested { .. } => {
+                if window.label() == "main" {
+                    window.app_handle().exit(0);
+                }
+            }
             tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Moved(_) => {
                 if window.label() == "main" {
                     file_controller::persist_main_window_state(window);
