@@ -3293,6 +3293,34 @@
           }
           return;
         }
+        if ((event.metaKey || event.ctrlKey) && lowered === "a") {
+          const activeTag = document.activeElement?.tagName || "";
+          if (activeTag === "INPUT" || activeTag === "TEXTAREA" || activeTag === "SELECT") return;
+          if (document.activeElement?.isContentEditable) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const current = focusedRow();
+          const activeColumnIndex = Number(
+            current?.dataset?.column ??
+              root.querySelector(".finder-column.is-active")?.dataset?.column ??
+              0,
+          );
+          const columnRows = rowsByColumn.get(activeColumnIndex) || [];
+          if (columnRows.length === 0) return;
+          setSelectionByPaths(
+            columnRows.map((row) => row.dataset.path || "").filter((value) => !!value),
+            {
+              anchorPath: current?.dataset?.path || columnRows[0].dataset.path || null,
+              scopeColumn: activeColumnIndex,
+            },
+          );
+          if (current) {
+            focusAndRevealRow(current);
+          } else {
+            focusAndRevealRow(columnRows[0]);
+          }
+          return;
+        }
         if (event.metaKey && lowered === "w") {
           event.preventDefault();
           event.stopPropagation();
