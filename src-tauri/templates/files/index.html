@@ -1175,13 +1175,20 @@
       let searchSelectedPath = null;
       let searchUserPicked = false;
       let searchPreviewPath = null;
+      let directorySyncTimer = null;
+      let directorySyncInFlight = false;
       let commandItems = [];
       let commandSelectionIndex = 0;
       const commandCapabilitiesByPath = new Map();
       const searchPreviewObjectUrls = [];
       let lastSearchResultsHtml = "";
       window.__filesScrollStateByTab = window.__filesScrollStateByTab || {};
+      window.__filesDirectorySignatureByTab = window.__filesDirectorySignatureByTab || {};
       const getScrollState = () => window.__filesScrollStateByTab[activeTabId] || null;
+      const getDirectorySignature = () => window.__filesDirectorySignatureByTab[activeTabId] || null;
+      const setDirectorySignature = (signature) => {
+        window.__filesDirectorySignatureByTab[activeTabId] = signature;
+      };
       const saveScrollState = () => {
         const state = {
           layoutLeft: layout?.scrollLeft || 0,
@@ -2113,6 +2120,55 @@
       const setSearchStatus = (message) => {
         if (searchInlineStatus) {
           searchInlineStatus.textContent = String(message || "");
+        }
+      };
+      const visibleDirectoryPaths = () =>
+        columns
+          .map((column) => column.dataset.path || "")
+          .filter((path) => path.length > 0);
+      const canAutoRefreshDirectories = () => {
+        if (dragInProgress) return false;
+        if (modalRoot && !modalRoot.hidden) return false;
+        if (isSearchOpen() || isGotoOpen() || isCommandOpen()) return false;
+        return true;
+      };
+      const pollDirectoryChanges = () => {
+        if (directorySyncInFlight) return;
+        if (typeof invoke !== "function") return;
+        if (!canAutoRefreshDirectories()) return;
+        const paths = visibleDirectoryPaths();
+        if (paths.length === 0) return;
+
+        directorySyncInFlight = true;
+        invoke("visible_directories_signature", {pathsJson: JSON.stringify(paths)})
+          .then((signature) => {
+            const next = String(signature || "");
+            const previous = getDirectorySignature();
+            if (!previous) {
+              setDirectorySignature(next);
+              return;
+            }
+            if (previous !== next) {
+              setDirectorySignature(next);
+              htmxCommandSwap("index", {});
+            }
+          })
+          .catch((error) => {
+            logNav("visible_directories_signature failed", {error: String(error)});
+          })
+          .finally(() => {
+            directorySyncInFlight = false;
+          });
+      };
+      const startDirectoryPolling = () => {
+        if (directorySyncTimer) clearInterval(directorySyncTimer);
+        pollDirectoryChanges();
+        directorySyncTimer = setInterval(pollDirectoryChanges, 1100);
+      };
+      const stopDirectoryPolling = () => {
+        if (directorySyncTimer) {
+          clearInterval(directorySyncTimer);
+          directorySyncTimer = null;
         }
       };
       const clearSearchPreviewUrls = () => {
@@ -3526,6 +3582,7 @@
           });
       };
       bindExternalDrop();
+      startDirectoryPolling();
 
       document.addEventListener("keydown", onKeyDown);
       root.addEventListener("htmx:beforeRequest", () => {
@@ -3561,6 +3618,7 @@
             contextActionUnlisten = null;
           }
           stopSearchPolling();
+          stopDirectoryPolling();
           if (searchDebounceTimer) {
             clearTimeout(searchDebounceTimer);
             searchDebounceTimer = null;

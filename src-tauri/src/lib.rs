@@ -318,6 +318,7 @@ pub fn run() {
             file_controller::open_in_finder,
             file_controller::open_in_github_desktop,
             file_controller::path_context_capabilities,
+            file_controller::visible_directories_signature,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

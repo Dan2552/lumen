@@ -2267,6 +2267,79 @@ fn parse_paths_json_arg(paths_json: &str) -> Result<Vec<String>, String> {
     Ok(unique.into_iter().collect())
 }
 
+fn directory_listing_signature(path: &Path, show_hidden: bool) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    path.to_string_lossy().to_string().hash(&mut hasher);
+
+    let mut rows: Vec<(String, bool, u128)> = Vec::new();
+    match fs::read_dir(path) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if !show_hidden && name.starts_with('.') {
+                    continue;
+                }
+                let metadata = match entry.metadata() {
+                    Ok(metadata) => metadata,
+                    Err(_) => continue,
+                };
+                let modified_ms = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                    .map(|duration| duration.as_millis())
+                    .unwrap_or(0);
+                rows.push((name, metadata.is_dir(), modified_ms));
+            }
+            rows.sort_by(|a, b| a.0.cmp(&b.0));
+            rows.len().hash(&mut hasher);
+            for (name, is_dir, modified_ms) in rows {
+                name.hash(&mut hasher);
+                is_dir.hash(&mut hasher);
+                modified_ms.hash(&mut hasher);
+            }
+        }
+        Err(error) => {
+            "read_dir_error".hash(&mut hasher);
+            format!("{error}").hash(&mut hasher);
+        }
+    }
+
+    hasher.finish()
+}
+
+#[tauri::command]
+pub fn visible_directories_signature(
+    tabs_state: State<'_, FileTabsState>,
+    paths_json: String,
+) -> Result<String, String> {
+    let home = home_directory();
+    let mut model = tabs_state
+        .tabs
+        .lock()
+        .map_err(|_| "failed to lock tabs state".to_string())?;
+    ensure_tabs(&mut model, &home);
+    let show_hidden = model
+        .tabs
+        .iter()
+        .find(|tab| tab.id == model.active_id)
+        .or_else(|| model.tabs.first())
+        .map(|tab| tab.show_hidden)
+        .unwrap_or(false);
+    drop(model);
+
+    let paths = parse_paths_json_arg(&paths_json)?;
+    let mut hasher = DefaultHasher::new();
+    for path in paths {
+        let path_buf = PathBuf::from(&path);
+        if !path_buf.is_absolute() || !path_buf.is_dir() {
+            continue;
+        }
+        directory_listing_signature(&path_buf, show_hidden).hash(&mut hasher);
+    }
+    Ok(format!("{:016x}", hasher.finish()))
+}
+
 #[tauri::command]
 pub fn trash_paths(state: State<'_, FileTabsState>, paths_json: String) -> Result<String, String> {
     let home = home_directory();
