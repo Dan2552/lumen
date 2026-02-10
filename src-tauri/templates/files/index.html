@@ -3971,6 +3971,7 @@
             selectedInColumn(columnIndex - 1) ||
             (rowsByColumn.get(columnIndex - 1) || [])[0] ||
             null;
+          shouldNavigate = !event.shiftKey && !event.metaKey && !event.ctrlKey;
         } else if (event.key === "ArrowRight") {
           if (current.dataset.isDir === "true") {
             logNav("ArrowRight on dir", {
@@ -3987,6 +3988,7 @@
               selectedInColumn(columnIndex + 1) ||
               (rowsByColumn.get(columnIndex + 1) || [])[0] ||
               null;
+            shouldNavigate = !event.shiftKey && !event.metaKey && !event.ctrlKey;
           }
         }
 
