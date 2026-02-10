@@ -3006,7 +3006,10 @@
       };
       const getCommandItems = () => {
         const current = focusedRow();
-        const items = [];
+        const fileItems = [];
+        const currentDirectoryItems = [];
+        const selectedDirectoryItems = [];
+        const tabItems = [];
         const currentPath = current?.dataset?.path || "";
         const isDir = (current?.dataset?.isDir || "") === "true";
         const currentColumnIndex = Number(current?.dataset?.column || 0);
@@ -3027,8 +3030,83 @@
           : defaultCommandCapabilities(false);
         const currentColumnPath =
           columns.find((column) => Number(column.dataset.column || 0) === currentColumnIndex)?.dataset.path || rootPath;
+        const currentDirectoryPath = currentColumnPath || rootPath;
+        const selectedDirectoryPath = isDir ? currentPath : "";
+        if (currentDirectoryPath) {
+          maybeLoadCommandCapabilities(currentDirectoryPath, true);
+        }
+        if (selectedDirectoryPath) {
+          maybeLoadCommandCapabilities(selectedDirectoryPath, true);
+        }
+        const currentDirectoryCapabilities = currentDirectoryPath
+          ? commandCapabilitiesByPath.get(currentDirectoryPath) || defaultCommandCapabilities(true)
+          : defaultCommandCapabilities(true);
+        const selectedDirectoryCapabilities = selectedDirectoryPath
+          ? commandCapabilitiesByPath.get(selectedDirectoryPath) || defaultCommandCapabilities(true)
+          : defaultCommandCapabilities(true);
+        const pushDirectoryCommandSet = (targetItems, labelPrefix, directoryPath, directoryCapabilities) => {
+          if (!directoryPath) return;
+          targetItems.push({
+            label: `${labelPrefix}: Create directory`,
+            hint: "",
+            run: () => {
+              closeCommandModal();
+              runContextAction("new_dir", directoryPath);
+            },
+          });
+          targetItems.push({
+            label: `${labelPrefix}: Create file`,
+            hint: "",
+            run: () => {
+              closeCommandModal();
+              runContextAction("new_file", directoryPath);
+            },
+          });
+          targetItems.push({
+            label: `${labelPrefix}: Set as current tab root`,
+            hint: "",
+            run: () => {
+              closeCommandModal();
+              runContextAction("set_tab_root", directoryPath);
+            },
+          });
+          targetItems.push({
+            label: `${labelPrefix}: Open in Zed`,
+            hint: "",
+            run: () => {
+              closeCommandModal();
+              runContextAction("open_zed", directoryPath);
+            },
+          });
+          targetItems.push({
+            label: `${labelPrefix}: Open in Finder`,
+            hint: "",
+            run: () => {
+              closeCommandModal();
+              runContextAction("open_finder", directoryPath);
+            },
+          });
+          targetItems.push({
+            label: `${labelPrefix}: Open in Warp`,
+            hint: "",
+            run: () => {
+              closeCommandModal();
+              runContextAction("open_warp", directoryPath);
+            },
+          });
+          if (directoryCapabilities.show_github_desktop) {
+            targetItems.push({
+              label: `${labelPrefix}: Open in GitHub Desktop`,
+              hint: "",
+              run: () => {
+                closeCommandModal();
+                runContextAction("open_github_desktop", directoryPath);
+              },
+            });
+          }
+        };
 
-        items.push({
+        tabItems.push({
           label: "Tab: Go to location",
           hint: "Cmd+G",
           run: () => {
@@ -3036,7 +3114,7 @@
             openGoToModal();
           },
         });
-        items.push({
+        tabItems.push({
           label: showHidden ? "Tab: Hide hidden files" : "Tab: Show hidden files",
           hint: "",
           run: () => {
@@ -3045,7 +3123,7 @@
           },
         });
         if (rootPath) {
-          items.push({
+          tabItems.push({
             label: "Tab Root Directory: Open in Zed",
             hint: "",
             run: () => {
@@ -3053,7 +3131,7 @@
               runContextAction("open_zed", rootPath);
             },
           });
-          items.push({
+          tabItems.push({
             label: "Tab Root Directory: Open in Finder",
             hint: "",
             run: () => {
@@ -3061,7 +3139,7 @@
               runContextAction("open_finder", rootPath);
             },
           });
-          items.push({
+          tabItems.push({
             label: "Tab Root Directory: Open in Warp",
             hint: "",
             run: () => {
@@ -3070,7 +3148,7 @@
             },
           });
           if (rootCapabilities.show_github_desktop) {
-            items.push({
+            tabItems.push({
               label: "Tab Root Directory: Open in GitHub Desktop",
               hint: "",
               run: () => {
@@ -3082,36 +3160,14 @@
         }
 
         if (currentPath) {
-          const prefix = isDir ? "Directory" : "File";
-          const selectionPrefix = hasMultiSelection ? `Selection (${actionPaths.length} items)` : prefix;
-          if (isDir) {
-            items.push({
-              label: "Directory: Create directory",
-              hint: "",
-              run: () => {
-                closeCommandModal();
-                runContextAction("new_dir", currentPath);
-              },
-            });
-            items.push({
-              label: "Directory: Create file",
-              hint: "",
-              run: () => {
-                closeCommandModal();
-                runContextAction("new_file", currentPath);
-              },
-            });
-            items.push({
-              label: "Directory: Set as current tab root",
-              hint: "",
-              run: () => {
-                closeCommandModal();
-                runContextAction("set_tab_root", currentPath);
-              },
-            });
-          } else {
+          const selectionPrefix = hasMultiSelection
+            ? `Selection (${actionPaths.length} items)`
+            : isDir
+              ? "Selected Directory"
+              : "File";
+          if (!isDir) {
             if (capabilities.show_default_open && !hasMultiSelection) {
-              items.push({
+              fileItems.push({
                 label: "File: Open",
                 hint: "",
                 run: () => {
@@ -3121,45 +3177,33 @@
               });
             }
           }
-          if (!hasMultiSelection) {
-            items.push({
-              label: `${prefix}: Open in Zed`,
+          if (selectedDirectoryPath) {
+            pushDirectoryCommandSet(
+              selectedDirectoryItems,
+              "Selected Directory",
+              selectedDirectoryPath,
+              selectedDirectoryCapabilities,
+            );
+          }
+          if (currentDirectoryPath) {
+            pushDirectoryCommandSet(
+              currentDirectoryItems,
+              "Current Directory",
+              currentDirectoryPath,
+              currentDirectoryCapabilities,
+            );
+          }
+          if (!hasMultiSelection && !isDir) {
+            fileItems.push({
+              label: "File: Open in Zed",
               hint: "",
               run: () => {
                 closeCommandModal();
                 runContextAction("open_zed", actionPaths);
               },
             });
-            if (isDir) {
-              items.push({
-                label: "Directory: Open in Finder",
-                hint: "",
-                run: () => {
-                  closeCommandModal();
-                  runContextAction("open_finder", actionPaths);
-                },
-              });
-              items.push({
-                label: "Directory: Open in Warp",
-                hint: "",
-                run: () => {
-                  closeCommandModal();
-                  runContextAction("open_warp", actionPaths);
-                },
-              });
-              if (capabilities.show_github_desktop) {
-                items.push({
-                  label: "Selected Directory: Open in GitHub Desktop",
-                  hint: "",
-                  run: () => {
-                    closeCommandModal();
-                    runContextAction("open_github_desktop", actionPaths);
-                  },
-                });
-              }
-            }
           }
-          items.push({
+          fileItems.push({
             label: `${selectionPrefix}: Copy absolute path`,
             hint: "",
             run: () => {
@@ -3167,7 +3211,7 @@
               runContextAction("copy_absolute_path", actionPaths);
             },
           });
-          items.push({
+          fileItems.push({
             label: `${selectionPrefix}: Copy relative path`,
             hint: "",
             run: () => {
@@ -3176,8 +3220,8 @@
             },
           });
           if (!hasMultiSelection) {
-            items.push({
-              label: `${prefix}: Rename`,
+            fileItems.push({
+              label: `${selectionPrefix}: Rename`,
               hint: "",
               run: () => {
                 closeCommandModal();
@@ -3185,7 +3229,7 @@
               },
             });
           }
-          items.push({
+          fileItems.push({
             label: `${selectionPrefix}: Trash`,
             hint: "",
             run: () => {
@@ -3193,7 +3237,7 @@
               runContextAction("trash", actionPaths);
             },
           });
-          items.push({
+          fileItems.push({
             label: `${selectionPrefix}: Delete`,
             hint: "",
             run: () => {
@@ -3202,25 +3246,15 @@
             },
           });
         } else if (currentColumnPath) {
-          items.push({
-            label: "Directory: Create directory",
-            hint: "",
-            run: () => {
-              closeCommandModal();
-              runContextAction("new_dir", currentColumnPath);
-            },
-          });
-          items.push({
-            label: "Directory: Create file",
-            hint: "",
-            run: () => {
-              closeCommandModal();
-              runContextAction("new_file", currentColumnPath);
-            },
-          });
+          pushDirectoryCommandSet(
+            currentDirectoryItems,
+            "Current Directory",
+            currentColumnPath,
+            currentDirectoryCapabilities,
+          );
         }
 
-        return items;
+        return [...fileItems, ...currentDirectoryItems, ...selectedDirectoryItems, ...tabItems];
       };
       const filteredCommandItems = (query) => {
         const normalized = String(query || "").trim().toLowerCase();
@@ -3777,6 +3811,9 @@
           closeFilesModal({confirmed: false, value: ""});
           return;
         }
+        if (modalRoot && !modalRoot.hidden) {
+          return;
+        }
         if ((event.metaKey || event.ctrlKey) && event.altKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
           event.preventDefault();
           event.stopPropagation();
@@ -3847,6 +3884,23 @@
             closeGoToModal();
           }
           return;
+        }
+        if (
+          event.key === "Enter" &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.altKey
+        ) {
+          const activeTag = document.activeElement?.tagName || "";
+          if (activeTag !== "INPUT" && activeTag !== "TEXTAREA" && activeTag !== "SELECT" && !document.activeElement?.isContentEditable) {
+            const currentRow = focusedRow();
+            if (currentRow) {
+              event.preventDefault();
+              event.stopPropagation();
+              openCommandModal();
+              return;
+            }
+          }
         }
         if ((event.metaKey || event.ctrlKey) && lowered === "a") {
           const activeTag = document.activeElement?.tagName || "";
