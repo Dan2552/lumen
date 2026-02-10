@@ -230,10 +230,8 @@ fn list_directory(
         }
         DirectorySortMode::RecentFirst => {
             items.sort_by(|a, b| {
-                b.entry
-                    .is_dir
-                    .cmp(&a.entry.is_dir)
-                    .then_with(|| b.modified_ms.cmp(&a.modified_ms))
+                b.modified_ms
+                    .cmp(&a.modified_ms)
                     .then_with(|| a.name_key.cmp(&b.name_key))
             });
         }
