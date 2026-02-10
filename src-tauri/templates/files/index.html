@@ -1640,7 +1640,6 @@
       let domDragPoint = null;
       let tauriPayloadYOffset = null;
       let dragDropUnlisten = null;
-      let contextActionUnlisten = null;
       let optionPressed = false;
       let modalResolve = null;
       let searchPollTimer = null;
@@ -3519,22 +3518,29 @@
       const bindContextActionEvents = () => {
         const listen = window.__TAURI__?.event?.listen;
         if (typeof listen !== "function") return;
-        Promise.resolve(
-          listen("files-context-action", async (event) => {
-            const action = event?.payload?.action || "";
-            const path = event?.payload?.path || "";
-            if (!action || !path) return;
-            const pendingPaths = consumePendingContextSelectionPaths();
-            const targetPaths = pendingPaths.includes(path) ? pendingPaths : [path];
-            await runContextAction(action, targetPaths);
-          }),
-        )
-          .then((unlisten) => {
-            contextActionUnlisten = typeof unlisten === "function" ? unlisten : null;
-          })
-          .catch((error) => {
+        const contextActionHandler = async (event) => {
+          const action = event?.payload?.action || "";
+          const path = event?.payload?.path || "";
+          if (!action || !path) return;
+          const pendingPaths = consumePendingContextSelectionPaths();
+          const targetPaths = pendingPaths.includes(path) ? pendingPaths : [path];
+          await runContextAction(action, targetPaths);
+        };
+        window.__filesContextActionHandler = contextActionHandler;
+        if (!window.__filesContextActionBridgeReady) {
+          window.__filesContextActionBridgeReady = Promise.resolve(
+            listen("files-context-action", async (event) => {
+              const handler = window.__filesContextActionHandler;
+              if (typeof handler === "function") {
+                await handler(event);
+              }
+            }),
+          ).catch((error) => {
             logNav("context action listen failed", {error: String(error)});
+            window.__filesContextActionBridgeReady = null;
+            throw error;
           });
+        }
       };
       bindContextActionEvents();
       const closeFilesModal = (result) => {
@@ -4240,9 +4246,8 @@
             dragDropUnlisten();
             dragDropUnlisten = null;
           }
-          if (typeof contextActionUnlisten === "function") {
-            contextActionUnlisten();
-            contextActionUnlisten = null;
+          if (window.__filesContextActionHandler) {
+            window.__filesContextActionHandler = null;
           }
           stopSearchPolling();
           stopDirectoryPolling();
