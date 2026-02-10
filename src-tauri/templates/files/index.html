@@ -1653,6 +1653,8 @@
       let directorySyncInFlight = false;
       let commandItems = [];
       let commandSelectionIndex = 0;
+      let commandModalIgnoreBackdropUntil = 0;
+      let commandModalIgnoreInteractionsUntil = 0;
       const commandCapabilitiesByPath = new Map();
       const searchPreviewObjectUrls = [];
       let lastSearchResultsHtml = "";
@@ -2978,7 +2980,10 @@
       };
       const closeCommandModal = () => {
         if (!commandModal) return;
+        logNav("command modal close");
         commandModal.hidden = true;
+        commandModalIgnoreBackdropUntil = 0;
+        commandModalIgnoreInteractionsUntil = 0;
       };
       const defaultCommandCapabilities = (isDir) => ({
         is_dir: !!isDir,
@@ -3285,10 +3290,18 @@
         const active = commandList.querySelector(`.command-item[data-index="${commandSelectionIndex}"]`);
         if (active) active.scrollIntoView({block: "nearest"});
       };
-      const openCommandModal = () => {
+      const openCommandModal = (options = {}) => {
         if (!commandModal || !commandInput) return;
         closeSearchPalette();
         closeGoToModal();
+        const now = Date.now();
+        commandModalIgnoreBackdropUntil = options.ignoreInitialBackdropClick ? now + 260 : 0;
+        commandModalIgnoreInteractionsUntil = options.ignoreInitialBackdropClick ? now + 260 : 0;
+        logNav("command modal open", {
+          ignoreInitialBackdropClick: !!options.ignoreInitialBackdropClick,
+          ignoreBackdropMs: Math.max(0, commandModalIgnoreBackdropUntil - now),
+          ignoreInteractionsMs: Math.max(0, commandModalIgnoreInteractionsUntil - now),
+        });
         commandModal.hidden = false;
         commandSelectionIndex = 0;
         commandInput.value = "";
@@ -3437,6 +3450,12 @@
       }
       if (commandList) {
         commandList.addEventListener("click", (event) => {
+          if (Date.now() < commandModalIgnoreInteractionsUntil) {
+            logNav("command list click ignored (initial interaction guard)");
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
           const target = event.target.closest(".command-item[data-index]");
           if (!target) return;
           const index = Number(target.dataset.index || -1);
@@ -3448,6 +3467,13 @@
       if (commandModal) {
         commandModal.addEventListener("click", (event) => {
           if (event.target === commandModal) {
+            if (Date.now() < commandModalIgnoreBackdropUntil) {
+              logNav("command modal backdrop click ignored (initial backdrop guard)");
+              event.preventDefault();
+              event.stopPropagation();
+              return;
+            }
+            logNav("command modal backdrop click close");
             closeCommandModal();
           }
         });
@@ -3611,6 +3637,16 @@
           if (dragInProgress) return;
           const isToggle = !!(event.metaKey || event.ctrlKey);
           const isRange = !!event.shiftKey;
+          const isDoublePrimaryClick = event.button === 0 && event.detail >= 2;
+          if (!isRange && !isToggle && isDoublePrimaryClick && (row.dataset.isDir || "") !== "true") {
+            logNav("row double-click capture", {path: row.dataset.path, column: row.dataset.column});
+            focusAndRevealRow(row);
+            setSingleSelection(row);
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            openCommandModal({ignoreInitialBackdropClick: true});
+            return;
+          }
           if (!isRange && !isToggle) return;
           focusAndRevealRow(row);
           if (isRange) {
@@ -3649,7 +3685,6 @@
         }
         setSingleSelection(row);
       });
-
       root.addEventListener("mousedown", (event) => {
         const row = mainRowFromEvent(event);
         if (!row) return;
