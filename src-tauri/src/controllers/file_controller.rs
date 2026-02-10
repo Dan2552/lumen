@@ -17,6 +17,7 @@ use tauri::{
     Runtime, State, Window,
 };
 use tera::Context;
+use zip::ZipArchive;
 
 #[derive(Debug, Serialize)]
 struct FileEntry {
@@ -47,6 +48,25 @@ struct PreviewModel {
     pdf_path: Option<String>,
     glb_path: Option<String>,
     video_path: Option<String>,
+    zip_entries: Option<Vec<ZipEntryItem>>,
+    text_head: Option<String>,
+    note: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+struct ZipEntryItem {
+    name: String,
+    is_dir: bool,
+    size: u64,
+    icon: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ZipEntryPreviewData {
+    kind: String,
+    title: String,
+    subtitle: String,
+    image_data_url: Option<String>,
     text_head: Option<String>,
     note: Option<String>,
 }
@@ -806,6 +826,13 @@ fn is_probably_plain_text(path: &Path) -> bool {
     if buffer.is_empty() {
         return true;
     }
+    is_probably_plain_text_bytes(&buffer)
+}
+
+fn is_probably_plain_text_bytes(buffer: &[u8]) -> bool {
+    if buffer.is_empty() {
+        return true;
+    }
     if buffer.contains(&0) {
         return false;
     }
@@ -815,6 +842,137 @@ fn is_probably_plain_text(path: &Path) -> bool {
         .count();
     // Allow a small amount of control bytes for odd files, but reject mostly-binary content.
     (control_bytes as f64) / (buffer.len() as f64) <= 0.01
+}
+
+fn list_zip_entries(path: &Path) -> Result<Vec<ZipEntryItem>, String> {
+    const MAX_ZIP_ENTRIES: usize = 5000;
+    let file = fs::File::open(path).map_err(|error| error.to_string())?;
+    let mut archive = ZipArchive::new(file).map_err(|error| error.to_string())?;
+    let mut entries = Vec::new();
+
+    for index in 0..archive.len().min(MAX_ZIP_ENTRIES) {
+        let entry = archive.by_index(index).map_err(|error| error.to_string())?;
+        let raw_name = entry.name().trim_end_matches('/').to_string();
+        if raw_name.is_empty() {
+            continue;
+        }
+        let is_dir = entry.is_dir();
+        let base_name = Path::new(&raw_name)
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or(raw_name.as_str());
+        let icon = if is_dir {
+            "folder"
+        } else {
+            icon_for_entry(base_name, false)
+        };
+        entries.push(ZipEntryItem {
+            name: raw_name,
+            is_dir,
+            size: entry.size(),
+            icon,
+        });
+    }
+
+    entries.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+
+    Ok(entries)
+}
+
+fn load_zip_entry_preview(path: &Path, entry_name: &str) -> Result<ZipEntryPreviewData, String> {
+    let file = fs::File::open(path).map_err(|error| error.to_string())?;
+    let mut archive = ZipArchive::new(file).map_err(|error| error.to_string())?;
+    let mut entry = archive
+        .by_name(entry_name)
+        .map_err(|error| error.to_string())?;
+
+    let title = Path::new(entry_name)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(entry_name)
+        .to_string();
+    let subtitle = entry_name.to_string();
+
+    if entry.is_dir() {
+        return Ok(ZipEntryPreviewData {
+            kind: "unknown".to_string(),
+            title,
+            subtitle,
+            image_data_url: None,
+            text_head: None,
+            note: Some("Directory entry.".to_string()),
+        });
+    }
+
+    let ext = Path::new(entry_name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+    let entry_size = entry.size();
+
+    if let Some(mime) = image_mime_from_ext(&ext) {
+        const MAX_ZIP_IMAGE_PREVIEW_BYTES: u64 = 64 * 1024 * 1024;
+        if entry_size > MAX_ZIP_IMAGE_PREVIEW_BYTES {
+            return Ok(ZipEntryPreviewData {
+                kind: "unknown".to_string(),
+                title,
+                subtitle,
+                image_data_url: None,
+                text_head: None,
+                note: Some("Image entry is too large for inline preview (max 64MB).".to_string()),
+            });
+        }
+        let mut bytes = Vec::new();
+        entry
+            .read_to_end(&mut bytes)
+            .map_err(|error| error.to_string())?;
+        return Ok(ZipEntryPreviewData {
+            kind: "image".to_string(),
+            title,
+            subtitle,
+            image_data_url: Some(format!("data:{mime};base64,{}", STANDARD.encode(bytes))),
+            text_head: None,
+            note: None,
+        });
+    }
+
+    let allow_text = is_previewable_text_ext(&ext) || ext.is_empty();
+    if allow_text {
+        const MAX_ZIP_TEXT_PREVIEW_BYTES: usize = 8 * 1024 * 1024;
+        let mut bytes = Vec::new();
+        let mut limited = entry.take(MAX_ZIP_TEXT_PREVIEW_BYTES as u64);
+        limited
+            .read_to_end(&mut bytes)
+            .map_err(|error| error.to_string())?;
+        if is_previewable_text_ext(&ext) || is_probably_plain_text_bytes(&bytes) {
+            return Ok(ZipEntryPreviewData {
+                kind: "text".to_string(),
+                title,
+                subtitle,
+                image_data_url: None,
+                text_head: Some(String::from_utf8_lossy(&bytes).to_string()),
+                note: if entry_size > MAX_ZIP_TEXT_PREVIEW_BYTES as u64 {
+                    Some("Showing the first 8MB.".to_string())
+                } else {
+                    None
+                },
+            });
+        }
+    }
+
+    Ok(ZipEntryPreviewData {
+        kind: "unknown".to_string(),
+        title,
+        subtitle,
+        image_data_url: None,
+        text_head: None,
+        note: Some("No inline preview for this ZIP entry type yet.".to_string()),
+    })
 }
 
 fn should_show_default_open_for_file(path: &Path) -> bool {
@@ -903,6 +1061,7 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
                 pdf_path: None,
                 glb_path: None,
                 video_path: None,
+                zip_entries: None,
                 text_head: None,
                 note: Some("Embedded Blender thumbnails.".to_string()),
             });
@@ -918,6 +1077,7 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
             pdf_path: None,
             glb_path: None,
             video_path: None,
+            zip_entries: None,
             text_head: None,
             note: Some("No embedded Blender thumbnail found.".to_string()),
         });
@@ -941,6 +1101,7 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
                 pdf_path: None,
                 glb_path: None,
                 video_path: None,
+                zip_entries: None,
                 text_head: None,
                 note: Some("Embedded Affinity thumbnails.".to_string()),
             });
@@ -956,6 +1117,7 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
             pdf_path: None,
             glb_path: None,
             video_path: None,
+            zip_entries: None,
             text_head: None,
             note: Some("No embedded Affinity thumbnail found.".to_string()),
         });
@@ -976,6 +1138,7 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
                 pdf_path: None,
                 glb_path: None,
                 video_path: None,
+                zip_entries: None,
                 text_head: None,
                 note: Some("Image is too large for inline preview (max 64MB).".to_string()),
             });
@@ -994,6 +1157,7 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
             pdf_path: None,
             glb_path: None,
             video_path: None,
+            zip_entries: None,
             text_head: None,
             note: None,
         });
@@ -1011,6 +1175,7 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
             pdf_path: Some(path.to_string_lossy().to_string()),
             glb_path: None,
             video_path: None,
+            zip_entries: None,
             text_head: None,
             note: None,
         });
@@ -1028,6 +1193,7 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
             pdf_path: None,
             glb_path: Some(path.to_string_lossy().to_string()),
             video_path: None,
+            zip_entries: None,
             text_head: None,
             note: None,
         });
@@ -1045,8 +1211,33 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
             pdf_path: None,
             glb_path: None,
             video_path: Some(path.to_string_lossy().to_string()),
+            zip_entries: None,
             text_head: None,
             note: None,
+        });
+    }
+
+    if ext == "zip" {
+        let entries = list_zip_entries(path).ok();
+        let empty = entries.as_ref().map(|value| value.is_empty()).unwrap_or(true);
+        return Some(PreviewModel {
+            kind: "zip".to_string(),
+            title: file_name,
+            subtitle,
+            path: path.to_string_lossy().to_string(),
+            icon,
+            image_data_url: None,
+            affinity_image_data_urls: None,
+            pdf_path: None,
+            glb_path: None,
+            video_path: None,
+            zip_entries: entries,
+            text_head: None,
+            note: if empty {
+                Some("ZIP archive is empty.".to_string())
+            } else {
+                None
+            },
         });
     }
 
@@ -1070,6 +1261,7 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
             pdf_path: None,
             glb_path: None,
             video_path: None,
+            zip_entries: None,
             text_head: Some(text),
             note: if file_size > MAX_TEXT_PREVIEW_BYTES as u64 {
                 Some("Showing the first 8MB.".to_string())
@@ -1090,6 +1282,7 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
         pdf_path: None,
         glb_path: None,
         video_path: None,
+        zip_entries: None,
         text_head: None,
         note: Some("No preview available for this file type yet.".to_string()),
     })
@@ -2747,6 +2940,31 @@ pub async fn load_video_preview_data(path: String) -> Result<ModelPreviewData, S
         mime_type: mime_type.to_string(),
         base64: STANDARD.encode(bytes),
     })
+}
+
+#[tauri::command]
+pub async fn load_zip_entry_preview_data(
+    path: String,
+    entry_name: String,
+) -> Result<ZipEntryPreviewData, String> {
+    let home = home_directory();
+    let target = resolve_home_scoped_path(&home, &path)?;
+    if !target.is_file() {
+        return Err("path is not a file".to_string());
+    }
+    let ext = target
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+    if ext != "zip" {
+        return Err("path is not a zip".to_string());
+    }
+    if entry_name.trim().is_empty() {
+        return Err("entry name is empty".to_string());
+    }
+
+    load_zip_entry_preview(&target, &entry_name)
 }
 
 #[tauri::command]

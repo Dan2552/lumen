@@ -45,6 +45,8 @@
     {% elif preview.kind == "video" and preview.video_path %}
       <div class="preview-loading" id="search-preview-video-status">Loading video preview...</div>
       <video class="preview-video" data-video-path="{{ preview.video_path }}" controls preload="metadata" hidden></video>
+    {% elif preview.kind == "zip" %}
+      <div class="preview-note">ZIP preview is available in the main pane.</div>
     {% elif preview.kind == "text" and preview.text_head %}
       <pre class="preview-text">{{ preview.text_head }}</pre>
     {% endif %}

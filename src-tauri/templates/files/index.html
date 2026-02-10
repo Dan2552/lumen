@@ -226,6 +226,81 @@
       font-family: "SF Mono", "Menlo", "Consolas", monospace;
     }
 
+    .preview-zip-explorer {
+      display: flex;
+      gap: 10px;
+      flex: 1;
+      min-height: 0;
+      min-width: 0;
+      width: 100%;
+      padding: 12px;
+      box-sizing: border-box;
+    }
+
+    .preview-zip-columns {
+      min-width: 0;
+      display: flex;
+      overflow: visible;
+      border: 1px solid #46506a;
+      background: linear-gradient(180deg, rgba(21, 30, 48, 0.9) 0%, rgba(15, 24, 41, 0.85) 100%);
+    }
+
+    .preview-zip-columns .finder-column {
+      width: 280px;
+      min-width: 240px;
+      background: rgba(38, 44, 58, 0.45);
+    }
+
+    .preview-zip-columns .column-body {
+      padding: 0;
+    }
+
+    .preview-zip-row {
+      justify-content: flex-start;
+    }
+
+    .preview-zip-row-name {
+      flex: 1;
+    }
+
+    .preview-zip-row-size {
+      color: #93a0ba;
+      font-size: 10px;
+      margin-left: auto;
+    }
+
+    .preview-zip-detail {
+      flex: 0 0 clamp(260px, 34%, 460px);
+      min-width: 220px;
+      max-width: 52%;
+      border: 1px solid #46506a;
+      border-radius: 10px;
+      background: linear-gradient(180deg, rgba(23, 34, 56, 0.9) 0%, rgba(13, 22, 39, 0.86) 100%);
+      overflow: auto;
+      padding: 10px;
+    }
+
+    .preview-pane.is-zip-preview {
+      width: auto;
+    }
+
+    .preview-pane.is-zip-preview .preview-body {
+      padding: 0;
+      overflow: hidden;
+      display: flex;
+      min-height: 0;
+    }
+
+    .preview-zip-empty {
+      color: #93a0ba;
+      font-size: 12px;
+    }
+
+    .preview-zip-loading {
+      color: #b8c5dc;
+      font-size: 12px;
+    }
+
     .preview-pdf {
       width: 100%;
       min-height: 520px;
@@ -901,6 +976,14 @@
         {% elif preview.kind == "video" and preview.video_path %}
           <div class="preview-loading" id="preview-video-status">Loading video preview...</div>
           <video class="preview-video" data-video-path="{{ preview.video_path }}" controls preload="metadata" hidden></video>
+        {% elif preview.kind == "zip" and preview.zip_entries %}
+          <div class="preview-zip-explorer" data-zip-path="{{ preview.path }}">
+            <script type="application/json" class="zip-entries-json">{{ preview.zip_entries | json_encode | safe }}</script>
+            <div class="preview-zip-columns"></div>
+            <div class="preview-zip-detail">
+              <div class="preview-zip-empty">Select a file to preview.</div>
+            </div>
+          </div>
         {% elif preview.kind == "text" and preview.text_head %}
           <pre class="preview-text">{{ preview.text_head }}</pre>
         {% endif %}
@@ -1111,6 +1194,372 @@
           status.textContent = "Failed to load video preview.";
         }
       }
+      let zipExplorerState = null;
+      const zipParseEntries = (jsonElement) => {
+        if (!jsonElement) return [];
+        try {
+          const parsed = JSON.parse(jsonElement.textContent || "[]");
+          return Array.isArray(parsed) ? parsed : [];
+        } catch (_error) {
+          return [];
+        }
+      };
+      const zipNormalizePath = (value) => String(value || "").replace(/^\/+/, "").replace(/\/+$/, "");
+      const zipTreeFromEntries = (entries) => {
+        const rootNode = {name: "", path: "", isDir: true, size: 0, icon: "folder", children: new Map()};
+        for (const entry of entries) {
+          const rawPath = zipNormalizePath(entry?.name || "");
+          if (!rawPath) continue;
+          const parts = rawPath.split("/").filter((segment) => segment.length > 0);
+          if (parts.length === 0) continue;
+          let currentNode = rootNode;
+          let currentPath = "";
+          for (let i = 0; i < parts.length; i += 1) {
+            const segment = parts[i];
+            currentPath = currentPath ? `${currentPath}/${segment}` : segment;
+            const isLeaf = i === parts.length - 1;
+            const leafIsDir = !!entry?.is_dir;
+            const shouldBeDir = !isLeaf || leafIsDir;
+            const existing = currentNode.children.get(segment);
+            if (!existing) {
+              const nextNode = {
+                name: segment,
+                path: currentPath,
+                isDir: shouldBeDir,
+                size: Number(entry?.size || 0),
+                icon: shouldBeDir ? "folder" : String(entry?.icon || "file"),
+                children: new Map(),
+              };
+              currentNode.children.set(segment, nextNode);
+              currentNode = nextNode;
+            } else {
+              if (shouldBeDir) {
+                existing.isDir = true;
+                existing.icon = "folder";
+              } else if (!existing.isDir) {
+                existing.size = Number(entry?.size || 0);
+                existing.icon = String(entry?.icon || existing.icon || "file");
+              }
+              currentNode = existing;
+            }
+          }
+        }
+        return rootNode;
+      };
+      const zipBuildLookup = (rootNode) => {
+        const map = new Map();
+        const stack = [rootNode];
+        while (stack.length) {
+          const node = stack.pop();
+          map.set(node.path, node);
+          for (const child of node.children.values()) {
+            stack.push(child);
+          }
+        }
+        return map;
+      };
+      const zipChildNodes = (zipState, dirPath) => {
+        const node = zipState.nodeByPath.get(dirPath || "");
+        if (!node || !node.children) return [];
+        const children = Array.from(node.children.values());
+        children.sort((a, b) => {
+          if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+          return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+        });
+        return children;
+      };
+      const zipNode = (zipState, path) => zipState.nodeByPath.get(path || "") || null;
+      const zipRowSelector = (depth, path) =>
+        `.preview-zip-row[data-zip-depth="${depth}"][data-zip-path="${CSS.escape(path)}"]`;
+      const zipSetDetailEmpty = (zipState, text) => {
+        if (!zipState?.detail) return;
+        zipState.detail.innerHTML = "";
+        const empty = document.createElement("div");
+        empty.className = "preview-zip-empty";
+        empty.textContent = text;
+        zipState.detail.appendChild(empty);
+      };
+      const zipRenderEntryPreviewDetail = (zipState, payload) => {
+        if (!zipState?.detail) return;
+        const detail = zipState.detail;
+        detail.innerHTML = "";
+        const title = document.createElement("div");
+        title.className = "preview-title";
+        title.textContent = String(payload?.title || "ZIP entry");
+        const subtitle = document.createElement("div");
+        subtitle.className = "preview-subtitle";
+        subtitle.textContent = String(payload?.subtitle || "");
+        detail.appendChild(title);
+        detail.appendChild(subtitle);
+
+        const kind = String(payload?.kind || "");
+        if (kind === "image" && payload?.image_data_url) {
+          const img = document.createElement("img");
+          img.className = "preview-image";
+          img.alt = String(payload?.title || "ZIP image");
+          img.src = String(payload.image_data_url);
+          img.style.marginTop = "10px";
+          detail.appendChild(img);
+        } else if (kind === "text" && payload?.text_head) {
+          const pre = document.createElement("pre");
+          pre.className = "preview-text";
+          pre.style.marginTop = "10px";
+          pre.textContent = String(payload.text_head || "");
+          detail.appendChild(pre);
+        } else {
+          const fallback = document.createElement("div");
+          fallback.className = "preview-zip-empty";
+          fallback.style.marginTop = "10px";
+          fallback.textContent = "No inline preview.";
+          detail.appendChild(fallback);
+        }
+
+        if (payload?.note) {
+          const note = document.createElement("div");
+          note.className = "preview-note";
+          note.textContent = String(payload.note);
+          detail.appendChild(note);
+        }
+        if (zipState?.ensureDetailVisible) {
+          zipState.ensureDetailVisible();
+        }
+      };
+      const zipLoadEntryPreview = (zipState, entryPath) => {
+        if (!zipState?.detail) return;
+        const invoke = window.__TAURI__?.core?.invoke;
+        if (typeof invoke !== "function") {
+          zipSetDetailEmpty(zipState, "ZIP entry preview is unavailable.");
+          return;
+        }
+        zipState.detail.innerHTML = '<div class="preview-zip-loading">Loading entry preview...</div>';
+        invoke("load_zip_entry_preview_data", {path: zipState.zipPath, entryName: entryPath})
+          .then((payload) => zipRenderEntryPreviewDetail(zipState, payload))
+          .catch((error) => zipSetDetailEmpty(zipState, String(error || "Failed to load ZIP entry preview.")));
+      };
+      const zipRenderColumns = (zipState) => {
+        if (!zipState?.columnsContainer) return;
+        const container = zipState.columnsContainer;
+        container.innerHTML = "";
+        let depth = 0;
+        let currentDirPath = "";
+        while (true) {
+          const dirNode = zipNode(zipState, currentDirPath);
+          if (!dirNode || !dirNode.isDir) break;
+          const section = document.createElement("section");
+          section.className = "finder-column preview-zip-column";
+          if (depth === zipState.activeDepth) {
+            section.classList.add("is-active");
+          }
+          section.dataset.zipDepth = String(depth);
+          const header = document.createElement("header");
+          header.className = "column-header";
+          const headerTitle = document.createElement("span");
+          headerTitle.className = "column-title";
+          headerTitle.textContent = depth === 0 ? "ZIP" : String(dirNode.name || "Folder").toUpperCase();
+          header.appendChild(headerTitle);
+          const body = document.createElement("div");
+          body.className = "column-body";
+
+          const children = zipChildNodes(zipState, currentDirPath);
+          const selectedPath = zipState.selectedByDepth[depth] || "";
+          for (const child of children) {
+            const row = document.createElement("button");
+            row.type = "button";
+            row.className = "finder-row preview-zip-row";
+            if (child.path === selectedPath) {
+              row.classList.add("is-selected");
+            }
+            row.dataset.zipDepth = String(depth);
+            row.dataset.zipPath = child.path;
+            row.dataset.zipDir = child.isDir ? "true" : "false";
+
+            const icon = document.createElement("i");
+            icon.className = `row-icon icon-${String(child.icon || "file")}`;
+            icon.setAttribute("aria-hidden", "true");
+            row.appendChild(icon);
+
+            const name = document.createElement("span");
+            name.className = `row-name preview-zip-row-name${child.isDir ? "" : " is-file"}`;
+            name.textContent = child.name;
+            row.appendChild(name);
+
+            const size = document.createElement("span");
+            size.className = "preview-zip-row-size";
+            size.textContent = child.isDir ? "" : `${child.size} B`;
+            row.appendChild(size);
+
+            const disclosure = document.createElement("span");
+            disclosure.className = "row-disclosure icon-chevron-right";
+            disclosure.setAttribute("aria-hidden", "true");
+            if (!child.isDir) {
+              disclosure.style.visibility = "hidden";
+            }
+            row.appendChild(disclosure);
+
+            body.appendChild(row);
+          }
+          section.appendChild(header);
+          section.appendChild(body);
+          container.appendChild(section);
+
+          if (!selectedPath) break;
+          const selectedNode = zipNode(zipState, selectedPath);
+          if (!selectedNode || !selectedNode.isDir) break;
+          currentDirPath = selectedNode.path;
+          depth += 1;
+        }
+        if (zipState.previewPane) {
+          const visibleColumns = container.querySelectorAll(".preview-zip-column").length;
+          const columnsWidth = Math.max(1, visibleColumns) * 280;
+          const detailWidth = 380;
+          const desired = Math.max(900, columnsWidth + detailWidth + 24);
+          zipState.previewPane.style.width = `${desired}px`;
+          zipState.previewPane.style.minWidth = `${desired}px`;
+        }
+      };
+      const zipSelect = (zipState, depth, path, focus = true) => {
+        const node = zipNode(zipState, path);
+        if (!node) return;
+        zipState.selectedByDepth = zipState.selectedByDepth.slice(0, depth);
+        zipState.selectedByDepth[depth] = node.path;
+        zipState.activeDepth = depth;
+        zipRenderColumns(zipState);
+        if (node.isDir) {
+          zipSetDetailEmpty(zipState, "Select a file to preview.");
+        } else {
+          zipLoadEntryPreview(zipState, node.path);
+        }
+        if (focus) {
+          const row = zipState.columnsContainer.querySelector(zipRowSelector(depth, node.path));
+          if (row) {
+            row.focus({preventScroll: true});
+            row.scrollIntoView({block: "nearest", inline: "nearest"});
+          }
+        }
+      };
+      const zipActivateFromMainSelection = (zipState) => {
+        const first = zipChildNodes(zipState, "")[0] || null;
+        if (!first) return false;
+        zipSelect(zipState, 0, first.path, true);
+        return true;
+      };
+      const zipHandleArrowKey = (zipState, event, currentMainRow) => {
+        if (!zipState) return false;
+        const hasZipSelection = Array.isArray(zipState.selectedByDepth) && zipState.selectedByDepth.length > 0;
+        const focusedZipRow = document.activeElement?.closest?.(".preview-zip-row[data-zip-path]") || null;
+        const clearZipSelection = () => {
+          zipState.selectedByDepth = [];
+          zipState.activeDepth = 0;
+          zipRenderColumns(zipState);
+          zipSetDetailEmpty(zipState, "Select a file to preview.");
+          if (currentMainRow) {
+            currentMainRow.focus({preventScroll: true});
+          }
+        };
+        if (!focusedZipRow) {
+          if (
+            event.key === "ArrowRight" &&
+            currentMainRow &&
+            (currentMainRow.dataset.isDir || "") !== "true" &&
+            (currentMainRow.dataset.path || "") === zipState.zipPath
+          ) {
+            return zipActivateFromMainSelection(zipState);
+          }
+          // While a ZIP entry is selected internally, do not allow normal file-column arrow handling.
+          if (hasZipSelection) {
+            if (event.key === "ArrowLeft") {
+              clearZipSelection();
+            }
+            return true;
+          }
+          return false;
+        }
+        if (!hasZipSelection) {
+          // If nothing inside ZIP is selected, defer to normal file-browser key handling.
+          return false;
+        }
+
+        const depth = Number(focusedZipRow.dataset.zipDepth || Math.max(0, zipState.selectedByDepth.length - 1));
+        const currentPath =
+          focusedZipRow.dataset.zipPath ||
+          zipState.selectedByDepth[Math.max(0, Math.min(depth, zipState.selectedByDepth.length - 1))] ||
+          "";
+        const siblings = Array.from(
+          zipState.columnsContainer.querySelectorAll(`.preview-zip-row[data-zip-depth="${depth}"]`),
+        );
+        const index = siblings.findIndex((row) => (row.dataset.zipPath || "") === currentPath);
+        if (event.key === "ArrowUp" && index > 0) {
+          zipSelect(zipState, depth, siblings[index - 1].dataset.zipPath || "", true);
+          return true;
+        }
+        if (event.key === "ArrowDown" && index >= 0 && index < siblings.length - 1) {
+          zipSelect(zipState, depth, siblings[index + 1].dataset.zipPath || "", true);
+          return true;
+        }
+        if (event.key === "ArrowLeft") {
+          if (depth > 0) {
+            const parentPath = zipState.selectedByDepth[depth - 1] || "";
+            if (parentPath) {
+              zipSelect(zipState, depth - 1, parentPath, true);
+              return true;
+            }
+          }
+          clearZipSelection();
+          return true;
+        }
+        if (event.key === "ArrowRight") {
+          const node = zipNode(zipState, currentPath);
+          if (!node || !node.isDir) return true;
+          const children = zipChildNodes(zipState, currentPath);
+          if (children.length === 0) return true;
+          zipSelect(zipState, depth + 1, children[0].path, true);
+          return true;
+        }
+        // While ZIP selection is active, arrow keys are fully owned by ZIP nav.
+        return true;
+      };
+      const initZipExplorer = (hostRoot) => {
+        const explorer = hostRoot.querySelector(".preview-zip-explorer[data-zip-path]");
+        if (!explorer) return null;
+        const previewPane = explorer.closest(".preview-pane");
+        if (previewPane) {
+          previewPane.classList.add("is-zip-preview");
+        }
+        const zipPath = explorer.getAttribute("data-zip-path") || "";
+        const columnsContainer = explorer.querySelector(".preview-zip-columns");
+        const detail = explorer.querySelector(".preview-zip-detail");
+        const jsonElement = explorer.querySelector(".zip-entries-json");
+        if (!zipPath || !columnsContainer || !detail || !jsonElement) return null;
+        const entries = zipParseEntries(jsonElement);
+        const tree = zipTreeFromEntries(entries);
+        const state = {
+          root: explorer,
+          zipPath,
+          columnsContainer,
+          detail,
+          previewPane,
+          ensureDetailVisible: null,
+          tree,
+          nodeByPath: zipBuildLookup(tree),
+          selectedByDepth: [],
+          activeDepth: 0,
+        };
+        zipRenderColumns(state);
+        const first = zipChildNodes(state, "")[0] || null;
+        if (!first) {
+          zipSetDetailEmpty(state, "ZIP archive is empty.");
+        } else {
+          zipSetDetailEmpty(state, "Select a file to preview.");
+        }
+        columnsContainer.addEventListener("click", (event) => {
+          const row = event.target.closest(".preview-zip-row[data-zip-path]");
+          if (!row) return;
+          const depth = Number(row.dataset.zipDepth || 0);
+          const path = row.dataset.zipPath || "";
+          zipSelect(state, depth, path, true);
+        });
+        return state;
+      };
       const activeTabId = root.dataset.activeTabId || "default";
       const rootPath = root.dataset.rootPath || "";
       const showHidden = (root.dataset.showHidden || "").toLowerCase() === "true";
@@ -1131,11 +1580,36 @@
         window.__filesFocusPathByTab[activeTabId] = path;
       };
 
-      const rows = Array.from(root.querySelectorAll(".finder-row"));
+      const rows = Array.from(root.querySelectorAll(".finder-layout > .finder-column .finder-row"));
       if (rows.length === 0) return;
       let dragInProgress = false;
-      const columns = Array.from(root.querySelectorAll(".finder-column"));
+      const columns = Array.from(root.querySelectorAll(".finder-layout > .finder-column"));
+      const isMainRow = (row) => !!row && rows.includes(row);
+      const isMainColumn = (column) => !!column && columns.includes(column);
+      const mainRowFromEvent = (event) => {
+        const row = event.target.closest(".finder-row");
+        return isMainRow(row) ? row : null;
+      };
+      const mainColumnBodies = () =>
+        columns
+          .map((column) => column.querySelector(".column-body"))
+          .filter((body) => !!body);
       const layout = root.querySelector(".finder-layout");
+      zipExplorerState = initZipExplorer(root);
+      if (zipExplorerState && layout) {
+        zipExplorerState.ensureDetailVisible = () => {
+          const detail = zipExplorerState?.detail;
+          if (!detail) return;
+          const layoutRect = layout.getBoundingClientRect();
+          const detailRect = detail.getBoundingClientRect();
+          const margin = 8;
+          if (detailRect.right > layoutRect.right - margin) {
+            layout.scrollLeft += detailRect.right - (layoutRect.right - margin);
+          } else if (detailRect.left < layoutRect.left + margin) {
+            layout.scrollLeft -= (layoutRect.left + margin) - detailRect.left;
+          }
+        };
+      }
       const previewPane = layout?.querySelector(".preview-pane") || null;
       const dropHint = root.querySelector("#drop-hint");
       const dropHintTitle = root.querySelector("#drop-hint-title");
@@ -1194,7 +1668,7 @@
           layoutLeft: layout?.scrollLeft || 0,
           columnTops: {},
         };
-        for (const body of root.querySelectorAll(".column-body")) {
+        for (const body of mainColumnBodies()) {
           const column = body.closest(".finder-column");
           const columnIndex = Number(column?.dataset?.column || 0);
           state.columnTops[columnIndex] = body.scrollTop;
@@ -1208,7 +1682,7 @@
         if (layout && Number.isFinite(state.layoutLeft)) {
           layout.scrollLeft = state.layoutLeft;
         }
-        for (const body of root.querySelectorAll(".column-body")) {
+        for (const body of mainColumnBodies()) {
           const column = body.closest(".finder-column");
           const columnIndex = Number(column?.dataset?.column || 0);
           const top = state.columnTops?.[columnIndex];
@@ -1275,7 +1749,9 @@
       const selectedInColumn = (columnIndex) =>
         selectedRows().find((row) => Number(row.dataset.column) === columnIndex) || null;
       const focusedRow = () =>
-        (root.contains(document.activeElement) && document.activeElement.classList.contains("finder-row")
+        (root.contains(document.activeElement) &&
+        document.activeElement.classList.contains("finder-row") &&
+        isMainRow(document.activeElement)
           ? document.activeElement
           : null) ||
         rows.find((row) => row.dataset.path === getFocusPath()) ||
@@ -1896,6 +2372,28 @@
           swap: "outerHTML",
           values,
         });
+      let zipPreviewCloseInFlight = false;
+      const maybeCloseZipPreviewIfInactive = () => {
+        if (zipPreviewCloseInFlight) return;
+        if (!previewPane?.classList.contains("is-zip-preview")) return;
+        const previewPath = String(previewPane?.dataset?.previewPath || "");
+        if (!previewPath) return;
+        const stillSelected = selectedRows().some((row) => (row.dataset.path || "") === previewPath);
+        const focusedPath = String(getFocusPath() || "");
+        if (stillSelected && focusedPath === previewPath) return;
+        zipPreviewCloseInFlight = true;
+        const preferredPath = focusedPath && focusedPath !== previewPath ? focusedPath : "";
+        const selectedWithoutPreview =
+          selectedRows()
+            .map((row) => row.dataset.path || "")
+            .find((path) => !!path && path !== previewPath) || "";
+        const fallbackPath = preferredPath || selectedWithoutPreview;
+        if (fallbackPath) {
+          htmxCommandSwap("navigate", {path: fallbackPath});
+        } else {
+          htmxCommandSwap("index", {});
+        }
+      };
       const invoke = window.__TAURI__?.core?.invoke;
       const invokeCommandSwap = async (command, values) => {
         if (typeof invoke !== "function") {
@@ -3074,7 +3572,7 @@
       root.addEventListener(
         "click",
         (event) => {
-          const row = event.target.closest(".finder-row");
+          const row = mainRowFromEvent(event);
           if (!row) return;
           if (dragInProgress) return;
           const isToggle = !!(event.metaKey || event.ctrlKey);
@@ -3092,7 +3590,7 @@
         true,
       );
       root.addEventListener("click", (event) => {
-        const row = event.target.closest(".finder-row");
+        const row = mainRowFromEvent(event);
         if (!row) return;
         if (dragInProgress) return;
         const isToggle = !!(event.metaKey || event.ctrlKey);
@@ -3119,7 +3617,7 @@
       });
 
       root.addEventListener("mousedown", (event) => {
-        const row = event.target.closest(".finder-row");
+        const row = mainRowFromEvent(event);
         if (!row) return;
         // Right-click is handled via context menu path; keep default for left button
         // so native dragging can start.
@@ -3129,7 +3627,7 @@
       });
 
       root.addEventListener("contextmenu", (event) => {
-        const row = event.target.closest(".finder-row");
+        const row = mainRowFromEvent(event);
         if (row) {
           event.preventDefault();
           logNav("contextmenu", {path: row.dataset.path, column: row.dataset.column});
@@ -3168,11 +3666,11 @@
       });
 
       root.addEventListener("contextmenu", (event) => {
-        const row = event.target.closest(".finder-row");
+        const row = mainRowFromEvent(event);
         const header = event.target.closest(".column-header");
-        if (row || header) return;
+        if (row || (header && isMainColumn(header.closest(".finder-column")))) return;
         const column = event.target.closest(".finder-column");
-        if (!column) return;
+        if (!isMainColumn(column)) return;
         const path = column.dataset.path || "";
         if (!path) return;
         event.preventDefault();
@@ -3187,7 +3685,8 @@
         });
       });
       root.addEventListener("dragstart", (event) => {
-        const row = event.target.closest(".finder-row");
+        const foundRow = event.target.closest(".finder-row");
+        const row = isMainRow(foundRow) ? foundRow : null;
         const preview = event.target.closest(".preview-pane");
         if (preview && preview.dataset.previewDraggable === "false") return;
         if (!row && !preview) return;
@@ -3254,7 +3753,7 @@
       });
 
       root.addEventListener("focusin", (event) => {
-        const row = event.target.closest(".finder-row");
+        const row = mainRowFromEvent(event);
         if (!row) return;
         logScroll("focusin", {
           path: row.dataset.path,
@@ -3264,7 +3763,7 @@
         setActiveColumn(Number(row.dataset.column || 0));
       });
 
-      for (const body of root.querySelectorAll(".column-body")) {
+      for (const body of mainColumnBodies()) {
         body.addEventListener("scroll", () => {
           logScroll("column-body scroll", {top: body.scrollTop});
         });
@@ -3358,7 +3857,7 @@
           const current = focusedRow();
           const activeColumnIndex = Number(
             current?.dataset?.column ??
-              root.querySelector(".finder-column.is-active")?.dataset?.column ??
+              columns.find((column) => column.classList.contains("is-active"))?.dataset?.column ??
               0,
           );
           const columnRows = rowsByColumn.get(activeColumnIndex) || [];
@@ -3424,7 +3923,9 @@
         event.preventDefault();
 
         const current =
-          (root.contains(document.activeElement) && document.activeElement.classList.contains("finder-row")
+          (root.contains(document.activeElement) &&
+          document.activeElement.classList.contains("finder-row") &&
+          isMainRow(document.activeElement)
             ? document.activeElement
             : null) ||
           rows.find((row) => row.dataset.path === getFocusPath()) ||
@@ -3436,6 +3937,9 @@
           currentColumn: current ? Number(current.dataset.column || 0) : null,
           currentIsDir: current?.dataset?.isDir || null,
         });
+        if (zipHandleArrowKey(zipExplorerState, event, current)) {
+          return;
+        }
         if (!current) {
           if (event.key === "ArrowDown") {
             const firstColumnRow = (rowsByColumn.get(0) || [])[0] || null;
@@ -3500,6 +4004,10 @@
         }
         if (shouldNavigate) {
           target.click();
+        } else {
+          if (!event.shiftKey && !event.metaKey && !event.ctrlKey) {
+            maybeCloseZipPreviewIfInactive();
+          }
         }
       };
 

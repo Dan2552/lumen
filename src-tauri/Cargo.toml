@@ -33,6 +33,7 @@ include_dir = { version = "0.7.4", features = ["glob"] }
 base64 = "0.22.1"
 png = "0.17.16"
 flate2 = "1.1.2"
+zip = "2.2.0"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
