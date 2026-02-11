@@ -3221,12 +3221,6 @@ pub fn open_in_github_desktop(
     open_in_github_desktop_with_tab_root(path, tab_root)
 }
 
-pub fn open_in_github_desktop_from_app(app: &AppHandle, path: String) -> Result<(), String> {
-    let tabs_state = app.state::<FileTabsState>();
-    let tab_root = active_tab_root_for_state(&tabs_state)?;
-    open_in_github_desktop_with_tab_root(path, tab_root)
-}
-
 fn active_tab_root_for_state(tabs_state: &State<'_, FileTabsState>) -> Result<PathBuf, String> {
     let home = home_directory();
     let mut model = tabs_state

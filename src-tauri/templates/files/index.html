@@ -2914,6 +2914,23 @@
           htmxCommandSwap("delete_paths", {pathsJson: JSON.stringify(targetPaths)});
         }
       };
+      window.__filesHandleNativeContextAction = async (payload) => {
+        const action = String(payload?.action || "");
+        if (!action) return;
+        const payloadPaths = Array.isArray(payload?.paths)
+          ? payload.paths.map((value) => String(value || "")).filter((value) => !!value)
+          : [];
+        const path = String(payload?.path || "");
+        const targetPaths = payloadPaths.length > 0 ? payloadPaths : path ? [path] : [];
+        if (targetPaths.length === 0) return;
+        await runContextAction(action, targetPaths);
+      };
+      if (Array.isArray(window.__filesPendingNativeContextActions) && window.__filesPendingNativeContextActions.length > 0) {
+        const queue = window.__filesPendingNativeContextActions.splice(0, window.__filesPendingNativeContextActions.length);
+        for (const payload of queue) {
+          window.__filesHandleNativeContextAction(payload);
+        }
+      }
       const setSearchStatus = (message) => {
         if (searchInlineStatus) {
           searchInlineStatus.textContent = String(message || "");
@@ -3820,10 +3837,21 @@
         if (typeof listen !== "function") return;
         const contextActionHandler = async (event) => {
           const action = event?.payload?.action || "";
+          if (!action) return;
+          const payloadPaths = Array.isArray(event?.payload?.paths)
+            ? event.payload.paths.map((value) => String(value || "")).filter((value) => !!value)
+            : [];
           const path = event?.payload?.path || "";
-          if (!action || !path) return;
           const pendingPaths = consumePendingContextSelectionPaths();
-          const targetPaths = pendingPaths.includes(path) ? pendingPaths : [path];
+          const targetPaths =
+            payloadPaths.length > 0
+              ? payloadPaths
+              : pendingPaths.includes(path)
+                ? pendingPaths
+                : path
+                  ? [path]
+                  : [];
+          if (targetPaths.length === 0) return;
           await runContextAction(action, targetPaths);
         };
         window.__filesContextActionHandler = contextActionHandler;
@@ -4558,6 +4586,7 @@
           if (window.__filesContextActionHandler) {
             window.__filesContextActionHandler = null;
           }
+          // Keep native action handler alive across swaps; on_menu_event queues into window state.
           stopSearchPolling();
           stopDirectoryPolling();
           if (searchDebounceTimer) {

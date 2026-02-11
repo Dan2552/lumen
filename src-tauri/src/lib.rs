@@ -28,6 +28,7 @@ struct HoldState {
 struct FilesContextActionEvent {
     action: String,
     path: String,
+    paths: Vec<String>,
 }
 
 fn ensure_hold_window(app: &AppHandle) -> Result<(), tauri::Error> {
@@ -238,62 +239,47 @@ pub fn run() {
                 }
                 return;
             }
-            if menu_id == "ctx_open_default" {
-                let _ = file_controller::open_in_default(first_path.clone());
-                return;
-            }
-            if menu_id == "ctx_open_zed" {
-                let _ = file_controller::open_in_zed(first_path.clone());
-                return;
-            }
-            if menu_id == "ctx_open_warp" {
-                let _ = file_controller::open_in_warp(first_path.clone());
-                return;
-            }
-            if menu_id == "ctx_open_finder" {
-                let _ = file_controller::open_in_finder(first_path.clone());
-                return;
-            }
-            if menu_id == "ctx_open_github_desktop" {
-                let _ = file_controller::open_in_github_desktop_from_app(app, first_path.clone());
-                return;
-            }
-
-            if menu_id == "ctx_rename"
-                || menu_id == "ctx_trash"
-                || menu_id == "ctx_delete"
-                || menu_id == "ctx_new_dir"
-                || menu_id == "ctx_new_file"
-                || menu_id == "ctx_set_tab_root"
-                || menu_id == "ctx_open_default"
-                || menu_id == "ctx_open_zed"
-                || menu_id == "ctx_open_warp"
-                || menu_id == "ctx_open_finder"
-                || menu_id == "ctx_open_github_desktop"
-            {
-                let action = match menu_id {
-                    "ctx_rename" => "rename",
-                    "ctx_trash" => "trash",
-                    "ctx_delete" => "delete",
-                    "ctx_new_dir" => "new_dir",
-                    "ctx_new_file" => "new_file",
-                    "ctx_set_tab_root" => "set_tab_root",
-                    "ctx_open_default" => "open_default",
-                    "ctx_open_zed" => "open_zed",
-                    "ctx_open_warp" => "open_warp",
-                    "ctx_open_finder" => "open_finder",
-                    "ctx_open_github_desktop" => "open_github_desktop",
-                    _ => return,
+            let action = match menu_id {
+                "ctx_rename" => Some("rename"),
+                "ctx_trash" => Some("trash"),
+                "ctx_delete" => Some("delete"),
+                "ctx_new_dir" => Some("new_dir"),
+                "ctx_new_file" => Some("new_file"),
+                "ctx_set_tab_root" => Some("set_tab_root"),
+                "ctx_open_default" => Some("open_default"),
+                "ctx_open_zed" => Some("open_zed"),
+                "ctx_open_warp" => Some("open_warp"),
+                "ctx_open_finder" => Some("open_finder"),
+                "ctx_open_github_desktop" => Some("open_github_desktop"),
+                _ => None,
+            };
+            if let Some(action) = action {
+                let payload = FilesContextActionEvent {
+                    action: action.to_string(),
+                    path: first_path.clone(),
+                    paths: absolute_paths.clone(),
                 };
-                let _ = app.emit(
-                    "files-context-action",
-                    FilesContextActionEvent {
-                        action: action.to_string(),
-                        path: first_path,
-                    },
-                );
                 if let Some(window) = app.get_webview_window("main") {
+                    if let Ok(payload_json) = serde_json::to_string(&payload) {
+                        let script = format!(
+                            "(function(){{\
+                                var payload={payload_json};\
+                                window.__filesPendingNativeContextActions=window.__filesPendingNativeContextActions||[];\
+                                window.__filesPendingNativeContextActions.push(payload);\
+                                var handler=window.__filesHandleNativeContextAction;\
+                                if(typeof handler==='function'){{\
+                                    var queue=window.__filesPendingNativeContextActions.splice(0, window.__filesPendingNativeContextActions.length);\
+                                    for(var i=0;i<queue.length;i++){{\
+                                        try{{handler(queue[i]);}}catch(_err){{}}\
+                                    }}\
+                                }}\
+                            }})();"
+                        );
+                        let _ = window.eval(&script);
+                    }
                     let _ = window.set_focus();
+                } else {
+                    let _ = app.emit("files-context-action", payload);
                 }
                 return;
             }
