@@ -867,12 +867,113 @@ fn markdown_image_data_url(markdown_path: &Path, destination: &str) -> Option<St
     Some(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
 }
 
+fn rewrite_html_img_sources(fragment: &str, markdown_path: &Path) -> String {
+    fn eq_ascii_ignore_case(a: u8, b: u8) -> bool {
+        a.eq_ignore_ascii_case(&b)
+    }
+
+    fn find_img_src_value_range(tag: &str) -> Option<(usize, usize)> {
+        let bytes = tag.as_bytes();
+        if bytes.len() < 7 {
+            return None;
+        }
+        let mut i = 0usize;
+        while i + 3 <= bytes.len() {
+            if eq_ascii_ignore_case(bytes[i], b's')
+                && eq_ascii_ignore_case(bytes[i + 1], b'r')
+                && eq_ascii_ignore_case(bytes[i + 2], b'c')
+            {
+                let prev_ok = i == 0
+                    || bytes[i - 1].is_ascii_whitespace()
+                    || bytes[i - 1] == b'<'
+                    || bytes[i - 1] == b'/';
+                if !prev_ok {
+                    i += 1;
+                    continue;
+                }
+                let mut j = i + 3;
+                while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                if j >= bytes.len() || bytes[j] != b'=' {
+                    i += 1;
+                    continue;
+                }
+                j += 1;
+                while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                if j >= bytes.len() {
+                    return None;
+                }
+                let quote = bytes[j];
+                if quote == b'"' || quote == b'\'' {
+                    let value_start = j + 1;
+                    let mut k = value_start;
+                    while k < bytes.len() {
+                        if bytes[k] == quote {
+                            return Some((value_start, k));
+                        }
+                        k += 1;
+                    }
+                    return None;
+                }
+                let value_start = j;
+                let mut k = value_start;
+                while k < bytes.len() && !bytes[k].is_ascii_whitespace() && bytes[k] != b'>' {
+                    k += 1;
+                }
+                return Some((value_start, k));
+            }
+            i += 1;
+        }
+        None
+    }
+
+    let mut output = String::with_capacity(fragment.len());
+    let mut cursor = 0usize;
+
+    while let Some(rel_img_start) = fragment[cursor..].to_ascii_lowercase().find("<img") {
+        let img_start = cursor + rel_img_start;
+        output.push_str(&fragment[cursor..img_start]);
+
+        let Some(rel_img_end) = fragment[img_start..].find('>') else {
+            output.push_str(&fragment[img_start..]);
+            return output;
+        };
+        let img_end = img_start + rel_img_end + 1;
+        let tag = &fragment[img_start..img_end];
+
+        let mut rewritten = None::<String>;
+        if let Some((src_value_start, src_value_end)) = find_img_src_value_range(tag) {
+            let raw_src = &tag[src_value_start..src_value_end];
+            if let Some(data_url) = markdown_image_data_url(markdown_path, raw_src) {
+                let mut next_tag = String::with_capacity(tag.len() + data_url.len());
+                next_tag.push_str(&tag[..src_value_start]);
+                next_tag.push_str(&data_url);
+                next_tag.push_str(&tag[src_value_end..]);
+                rewritten = Some(next_tag);
+            }
+        }
+
+        output.push_str(rewritten.as_deref().unwrap_or(tag));
+        cursor = img_end;
+    }
+
+    output.push_str(&fragment[cursor..]);
+    output
+}
+
 fn render_markdown_preview_html(markdown: &str, markdown_path: &Path) -> String {
     let options = Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TABLES
         | Options::ENABLE_TASKLISTS
         | Options::ENABLE_FOOTNOTES;
     let parser = Parser::new_ext(markdown, options).map(|event| match event {
+        Event::Html(value) => Event::Html(CowStr::from(rewrite_html_img_sources(&value, markdown_path))),
+        Event::InlineHtml(value) => {
+            Event::InlineHtml(CowStr::from(rewrite_html_img_sources(&value, markdown_path)))
+        }
         Event::Start(Tag::Image {
             link_type,
             dest_url,
@@ -893,7 +994,7 @@ fn render_markdown_preview_html(markdown: &str, markdown_path: &Path) -> String 
     });
     let mut html_out = String::new();
     html::push_html(&mut html_out, parser);
-    html_out
+    rewrite_html_img_sources(&html_out, markdown_path)
 }
 
 fn is_probably_plain_text(path: &Path) -> bool {
@@ -3033,6 +3134,30 @@ pub async fn load_video_preview_data(path: String) -> Result<ModelPreviewData, S
         mime_type: mime_type.to_string(),
         base64: STANDARD.encode(bytes),
     })
+}
+
+#[tauri::command]
+pub async fn load_markdown_image_data(
+    markdown_path: String,
+    image_src: String,
+) -> Result<String, String> {
+    let path = PathBuf::from(markdown_path);
+    markdown_image_data_url(&path, &image_src)
+        .ok_or_else(|| "Failed to resolve markdown image source.".to_string())
+}
+
+#[tauri::command]
+pub async fn load_local_image_data_url(path: String) -> Result<String, String> {
+    let source_path = PathBuf::from(path);
+    let ext = source_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+    let mime = image_mime_from_ext(&ext)
+        .ok_or_else(|| "Unsupported image type for inline markdown preview.".to_string())?;
+    let bytes = fs::read(&source_path).map_err(|error| error.to_string())?;
+    Ok(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
 }
 
 #[tauri::command]

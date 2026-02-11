@@ -2257,18 +2257,6 @@
         if (encoded.startsWith("/")) return `file://${encoded}`;
         return `file:///${encoded}`;
       };
-      const pathToPreviewSrc = (path) => {
-        if (!path) return "";
-        const convertFileSrc = window.__TAURI__?.core?.convertFileSrc;
-        if (typeof convertFileSrc === "function") {
-          try {
-            return String(convertFileSrc(path) || "");
-          } catch (_error) {
-            // Fall back to file URI conversion below.
-          }
-        }
-        return pathToFileUri(path);
-      };
       const normalizeFsPath = (value) => String(value || "").replace(/\\/g, "/");
       const isWindowsAbsPath = (value) => /^[A-Za-z]:\//.test(value);
       const isAbsoluteFsPath = (value) => value.startsWith("/") || isWindowsAbsPath(value);
@@ -2316,6 +2304,27 @@
         return resolved.join("/");
       };
       const rewriteMarkdownPreviewImages = (scopeRoot) => {
+        const assetUriToPath = (uri) => {
+          if (!uri) return "";
+          const value = String(uri || "");
+          if (value.startsWith("asset://localhost/")) {
+            const encoded = value.slice("asset://localhost/".length).split(/[?#]/)[0] || "";
+            try {
+              return decodeURIComponent(encoded);
+            } catch (_error) {
+              return encoded;
+            }
+          }
+          try {
+            const parsed = new URL(value);
+            if (parsed.protocol === "asset:" && parsed.hostname === "localhost") {
+              return decodeURIComponent((parsed.pathname || "").split(/[?#]/)[0] || "");
+            }
+          } catch (_error) {
+            // Ignore parse errors.
+          }
+          return "";
+        };
         if (!scopeRoot) return;
         const panes = [];
         if (scopeRoot.matches?.(".preview-pane[data-preview-path]")) {
@@ -2328,19 +2337,50 @@
           const markdownPath = String(pane.dataset.previewPath || "");
           if (!markdownPath) continue;
           const baseDir = dirnameFsPath(markdownPath);
+          const invoke = window.__TAURI__?.core?.invoke;
+          if (typeof invoke !== "function") continue;
           for (const image of markdownImages) {
+            if (image.dataset.mdImgResolved === "true") continue;
             const rawSrc = String(image.getAttribute("src") || "").trim();
             if (!rawSrc) continue;
             if (rawSrc.startsWith("#")) continue;
             if (rawSrc.startsWith("//")) continue;
-            if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(rawSrc)) continue;
-            const {pathPart, suffix} = splitPathAndSuffix(rawSrc);
-            if (!pathPart) continue;
-            const absolutePath = resolveFsPath(baseDir, pathPart);
+            if (/^(data:|blob:|https?:|mailto:|tel:)/i.test(rawSrc)) continue;
+            if (
+              /^[A-Za-z][A-Za-z0-9+.-]*:/.test(rawSrc) &&
+              !rawSrc.startsWith("file://") &&
+              !rawSrc.startsWith("asset://localhost/")
+            ) {
+              continue;
+            }
+
+            let absolutePath = "";
+            if (rawSrc.startsWith("file://")) {
+              absolutePath = fileUriToPath(rawSrc);
+            } else if (rawSrc.startsWith("asset://localhost/")) {
+              absolutePath = assetUriToPath(rawSrc);
+            } else {
+              const {pathPart} = splitPathAndSuffix(rawSrc);
+              if (!pathPart) continue;
+              absolutePath = resolveFsPath(baseDir, pathPart);
+            }
             if (!absolutePath) continue;
-            const previewSrc = pathToPreviewSrc(absolutePath);
-            if (!previewSrc) continue;
-            image.src = `${previewSrc}${suffix}`;
+            if (image.dataset.mdImgResolving === "true") continue;
+            image.dataset.mdImgResolving = "true";
+            invoke("load_local_image_data_url", {path: absolutePath})
+              .then((dataUrl) => {
+                const nextSrc = String(dataUrl || "");
+                if (nextSrc) {
+                  image.src = nextSrc;
+                  image.dataset.mdImgResolved = "true";
+                }
+              })
+              .catch(() => {
+                // Leave original src unchanged if local resolution fails.
+              })
+              .finally(() => {
+                delete image.dataset.mdImgResolving;
+              });
           }
         }
       };

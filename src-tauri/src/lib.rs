@@ -332,6 +332,8 @@ pub fn run() {
             file_controller::load_pdf_preview_data,
             file_controller::load_glb_preview_data,
             file_controller::load_video_preview_data,
+            file_controller::load_markdown_image_data,
+            file_controller::load_local_image_data_url,
             file_controller::load_zip_entry_preview_data,
             file_controller::open_in_default,
             file_controller::open_in_zed,
