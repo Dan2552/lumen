@@ -2708,6 +2708,14 @@
           root.outerHTML = html;
         }
       };
+      const openNewWindow = async () => {
+        if (typeof invoke !== "function") return;
+        try {
+          await invoke("new_window");
+        } catch (error) {
+          logNav("new_window failed", {error: String(error)});
+        }
+      };
       const isSearchOpen = () => !!searchRoot && !searchRoot.hidden;
       const isGotoOpen = () => !!gotoModal && !gotoModal.hidden;
       const isCommandOpen = () => !!commandModal && !commandModal.hidden;
@@ -3433,6 +3441,14 @@
           run: () => {
             closeCommandModal();
             openGoToModal();
+          },
+        });
+        tabItems.push({
+          label: "Window: New window",
+          hint: "Cmd+Shift+N",
+          run: () => {
+            closeCommandModal();
+            openNewWindow();
           },
         });
         tabItems.push({
@@ -4237,7 +4253,13 @@
           }
           return;
         }
-        if ((event.metaKey || event.ctrlKey) && lowered === "n") {
+        if ((event.metaKey || event.ctrlKey) && event.shiftKey && lowered === "n") {
+          event.preventDefault();
+          event.stopPropagation();
+          openNewWindow();
+          return;
+        }
+        if ((event.metaKey || event.ctrlKey) && !event.shiftKey && lowered === "n") {
           event.preventDefault();
           event.stopPropagation();
           htmxCommandSwap("new_tab", {path: getFocusPath() || ""});

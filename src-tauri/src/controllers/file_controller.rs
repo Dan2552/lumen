@@ -15,7 +15,7 @@ use std::{
 };
 use tauri::{
     menu::MenuBuilder, AppHandle, LogicalPosition, Manager, PhysicalPosition, PhysicalSize,
-    Runtime, State, Window,
+    Runtime, State, WebviewUrl, WebviewWindowBuilder, Window,
 };
 use tera::Context;
 use zip::ZipArchive;
@@ -100,7 +100,7 @@ pub struct PathContextCapabilities {
     show_github_desktop: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct SearchModel {
     generation: u64,
     query: String,
@@ -111,20 +111,13 @@ struct SearchModel {
 }
 
 pub struct FileSearchState {
-    search: Arc<Mutex<SearchModel>>,
+    search: Arc<Mutex<HashMap<String, SearchModel>>>,
 }
 
 impl Default for FileSearchState {
     fn default() -> Self {
         Self {
-            search: Arc::new(Mutex::new(SearchModel {
-                generation: 0,
-                query: String::new(),
-                root_path: String::new(),
-                running: false,
-                scanned: 0,
-                results: Vec::new(),
-            })),
+            search: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -163,7 +156,7 @@ impl DirectorySortMode {
     }
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct TabsModel {
     #[serde(default)]
     tabs: Vec<TabState>,
@@ -175,6 +168,12 @@ struct TabsModel {
     directory_sorts: BTreeMap<String, DirectorySortMode>,
     #[serde(default)]
     window: Option<WindowGeometry>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, Default)]
+struct TabsStore {
+    #[serde(default)]
+    windows: BTreeMap<String, TabsModel>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -191,6 +190,27 @@ fn default_active_id() -> u64 {
 
 fn default_next_id() -> u64 {
     2
+}
+
+fn default_tabs_model() -> TabsModel {
+    TabsModel {
+        tabs: Vec::new(),
+        active_id: default_active_id(),
+        next_id: default_next_id(),
+        directory_sorts: BTreeMap::new(),
+        window: None,
+    }
+}
+
+fn default_search_model() -> SearchModel {
+    SearchModel {
+        generation: 0,
+        query: String::new(),
+        root_path: String::new(),
+        running: false,
+        scanned: 0,
+        results: Vec::new(),
+    }
 }
 
 #[derive(Debug)]
@@ -970,10 +990,14 @@ fn render_markdown_preview_html(markdown: &str, markdown_path: &Path) -> String 
         | Options::ENABLE_TASKLISTS
         | Options::ENABLE_FOOTNOTES;
     let parser = Parser::new_ext(markdown, options).map(|event| match event {
-        Event::Html(value) => Event::Html(CowStr::from(rewrite_html_img_sources(&value, markdown_path))),
-        Event::InlineHtml(value) => {
-            Event::InlineHtml(CowStr::from(rewrite_html_img_sources(&value, markdown_path)))
-        }
+        Event::Html(value) => Event::Html(CowStr::from(rewrite_html_img_sources(
+            &value,
+            markdown_path,
+        ))),
+        Event::InlineHtml(value) => Event::InlineHtml(CowStr::from(rewrite_html_img_sources(
+            &value,
+            markdown_path,
+        ))),
         Event::Start(Tag::Image {
             link_type,
             dest_url,
@@ -1022,7 +1046,9 @@ fn is_probably_plain_text_bytes(buffer: &[u8]) -> bool {
     }
     let control_bytes = buffer
         .iter()
-        .filter(|&&byte| (byte < 0x20 && byte != b'\n' && byte != b'\r' && byte != b'\t') || byte == 0x7f)
+        .filter(|&&byte| {
+            (byte < 0x20 && byte != b'\n' && byte != b'\r' && byte != b'\t') || byte == 0x7f
+        })
         .count();
     // Allow a small amount of control bytes for odd files, but reject mostly-binary content.
     (control_bytes as f64) / (buffer.len() as f64) <= 0.01
@@ -1403,7 +1429,10 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
 
     if ext == "zip" {
         let entries = list_zip_entries(path).ok();
-        let empty = entries.as_ref().map(|value| value.is_empty()).unwrap_or(true);
+        let empty = entries
+            .as_ref()
+            .map(|value| value.is_empty())
+            .unwrap_or(true);
         return Some(PreviewModel {
             kind: "zip".to_string(),
             title: file_name,
@@ -1425,7 +1454,8 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
         });
     }
 
-    let preview_as_text = is_previewable_text_ext(&ext) || (ext.is_empty() && is_probably_plain_text(path));
+    let preview_as_text =
+        is_previewable_text_ext(&ext) || (ext.is_empty() && is_probably_plain_text(path));
     if preview_as_text {
         const MAX_TEXT_PREVIEW_BYTES: usize = 8 * 1024 * 1024;
         let file = fs::File::open(path).ok()?;
@@ -1807,13 +1837,19 @@ fn tabs_state_path() -> PathBuf {
     home_directory().join(".lumen").join("state.json")
 }
 
-fn load_tabs_model_from_disk() -> Option<TabsModel> {
+fn load_tabs_store_from_disk() -> Option<TabsStore> {
     let path = tabs_state_path();
     let raw = fs::read_to_string(path).ok()?;
-    serde_json::from_str::<TabsModel>(&raw).ok()
+    if let Ok(store) = serde_json::from_str::<TabsStore>(&raw) {
+        return Some(store);
+    }
+    let legacy = serde_json::from_str::<TabsModel>(&raw).ok()?;
+    let mut windows = BTreeMap::new();
+    windows.insert("main".to_string(), legacy);
+    Some(TabsStore { windows })
 }
 
-fn persist_tabs_model(model: &TabsModel) {
+fn persist_tabs_store(store: &TabsStore) {
     let path = tabs_state_path();
     if let Some(parent) = path.parent() {
         if fs::create_dir_all(parent).is_err() {
@@ -1821,7 +1857,7 @@ fn persist_tabs_model(model: &TabsModel) {
         }
     }
 
-    let Ok(json) = serde_json::to_vec_pretty(model) else {
+    let Ok(json) = serde_json::to_vec_pretty(store) else {
         return;
     };
     let tmp_path = path.with_extension("json.tmp");
@@ -1836,22 +1872,54 @@ fn persist_tabs_model(model: &TabsModel) {
 }
 
 pub struct FileTabsState {
-    tabs: Mutex<TabsModel>,
+    tabs: Mutex<TabsStore>,
 }
 
 impl Default for FileTabsState {
     fn default() -> Self {
-        let model = load_tabs_model_from_disk().unwrap_or(TabsModel {
-            tabs: Vec::new(),
-            active_id: 1,
-            next_id: 2,
-            directory_sorts: BTreeMap::new(),
-            window: None,
-        });
+        let home = home_directory();
+        let mut store = load_tabs_store_from_disk().unwrap_or_default();
+        if store.windows.is_empty() {
+            store
+                .windows
+                .insert("main".to_string(), default_tabs_model());
+        }
+        if !store.windows.contains_key("main") {
+            if let Some(first_label) = store.windows.keys().next().cloned() {
+                if let Some(model) = store.windows.remove(&first_label) {
+                    store.windows.insert("main".to_string(), model);
+                }
+            }
+        }
+        if !store.windows.contains_key("main") {
+            store
+                .windows
+                .insert("main".to_string(), default_tabs_model());
+        }
+        for model in store.windows.values_mut() {
+            ensure_tabs(model, &home);
+        }
         Self {
-            tabs: Mutex::new(model),
+            tabs: Mutex::new(store),
         }
     }
+}
+
+fn ensure_window_model<'a>(store: &'a mut TabsStore, window_label: &str) -> &'a mut TabsModel {
+    store
+        .windows
+        .entry(window_label.to_string())
+        .or_insert_with(default_tabs_model)
+}
+
+fn ensure_window_tabs_model<'a>(
+    store: &'a mut TabsStore,
+    window_label: &str,
+    home: &Path,
+) -> &'a mut TabsModel {
+    let model = ensure_window_model(store, window_label);
+    ensure_tabs(model, home);
+    model
 }
 
 fn normalize_tab_path(home: &Path, input: Option<&str>) -> PathBuf {
@@ -1991,7 +2059,8 @@ fn sorted_ranked_results(
 }
 
 fn run_fuzzy_search_worker(
-    shared: Arc<Mutex<SearchModel>>,
+    shared: Arc<Mutex<HashMap<String, SearchModel>>>,
+    window_label: String,
     generation: u64,
     root: PathBuf,
     query: String,
@@ -2055,7 +2124,10 @@ fn run_fuzzy_search_worker(
             }
 
             if scanned % FLUSH_EVERY == 0 {
-                let Ok(mut model) = shared.lock() else {
+                let Ok(mut searches) = shared.lock() else {
+                    return;
+                };
+                let Some(model) = searches.get_mut(&window_label) else {
                     return;
                 };
                 if model.generation != generation {
@@ -2067,7 +2139,10 @@ fn run_fuzzy_search_worker(
         }
     }
 
-    let Ok(mut model) = shared.lock() else {
+    let Ok(mut searches) = shared.lock() else {
+        return;
+    };
+    let Some(model) = searches.get_mut(&window_label) else {
         return;
     };
     if model.generation != generation {
@@ -2076,6 +2151,15 @@ fn run_fuzzy_search_worker(
     model.scanned = scanned;
     model.running = false;
     model.results = sorted_ranked_results(&ranked, MAX_RESULTS);
+}
+
+fn search_model_mut<'a>(
+    searches: &'a mut HashMap<String, SearchModel>,
+    window_label: &str,
+) -> &'a mut SearchModel {
+    searches
+        .entry(window_label.to_string())
+        .or_insert_with(default_search_model)
 }
 
 fn ensure_tabs(model: &mut TabsModel, home: &Path) {
@@ -2125,26 +2209,85 @@ fn ensure_tabs(model: &mut TabsModel, home: &Path) {
 }
 
 pub fn restore_main_window_state<R: Runtime>(app: &AppHandle<R>) {
-    let window = match app.get_webview_window("main") {
-        Some(window) => window,
-        None => return,
-    };
+    restore_window_state(app, "main");
+}
 
-    let saved_geometry = {
+pub fn restore_saved_additional_windows<R: Runtime>(app: &AppHandle<R>) {
+    let labels = {
         let state = app.state::<FileTabsState>();
-        let Ok(model) = state.tabs.lock() else {
+        let Ok(store) = state.tabs.lock() else {
             return;
         };
-        model.window.clone()
+        store
+            .windows
+            .keys()
+            .filter(|label| label.as_str() != "main")
+            .cloned()
+            .collect::<Vec<_>>()
     };
 
-    if let Some(geometry) = saved_geometry {
+    for label in labels {
+        let _ = ensure_browser_window(app, &label);
+    }
+}
+
+pub fn restore_window_state<R: Runtime>(app: &AppHandle<R>, window_label: &str) {
+    let Some(window) = app.get_webview_window(window_label) else {
+        return;
+    };
+    if let Some(geometry) = saved_geometry_for_label(app, window_label) {
         let _ = window.set_size(PhysicalSize::new(geometry.width, geometry.height));
         let _ = window.set_position(PhysicalPosition::new(geometry.x, geometry.y));
     }
 }
 
-pub fn persist_main_window_state<R: Runtime>(window: &Window<R>) {
+fn saved_geometry_for_label<R: Runtime>(
+    app: &AppHandle<R>,
+    window_label: &str,
+) -> Option<WindowGeometry> {
+    let state = app.state::<FileTabsState>();
+    let Ok(store) = state.tabs.lock() else {
+        return None;
+    };
+    store
+        .windows
+        .get(window_label)
+        .and_then(|model| model.window.clone())
+}
+
+fn is_browser_window_label(label: &str) -> bool {
+    label == "main" || label.starts_with("main-")
+}
+
+pub fn browser_window_count<R: Runtime>(app: &AppHandle<R>) -> usize {
+    app.webview_windows()
+        .keys()
+        .filter(|label| is_browser_window_label(label))
+        .count()
+}
+
+pub fn remove_window_state<R: Runtime>(app: &AppHandle<R>, window_label: &str) {
+    if !is_browser_window_label(window_label) {
+        return;
+    }
+    let state = app.state::<FileTabsState>();
+    let Ok(mut store) = state.tabs.lock() else {
+        return;
+    };
+    store.windows.remove(window_label);
+    if store.windows.is_empty() {
+        store
+            .windows
+            .insert("main".to_string(), default_tabs_model());
+    }
+    persist_tabs_store(&store);
+}
+
+pub fn persist_window_state<R: Runtime>(window: &Window<R>) {
+    let label = window.label().to_string();
+    if !is_browser_window_label(&label) {
+        return;
+    }
     let Ok(position) = window.inner_position() else {
         return;
     };
@@ -2153,16 +2296,76 @@ pub fn persist_main_window_state<R: Runtime>(window: &Window<R>) {
     };
 
     let state = window.state::<FileTabsState>();
-    let Ok(mut model) = state.tabs.lock() else {
+    let Ok(mut store) = state.tabs.lock() else {
         return;
     };
+    let model = ensure_window_model(&mut store, &label);
     model.window = Some(WindowGeometry {
         x: position.x,
         y: position.y,
         width: size.width,
         height: size.height,
     });
-    persist_tabs_model(&model);
+    persist_tabs_store(&store);
+}
+
+pub fn open_new_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let label = next_window_label(app);
+    {
+        let state = app.state::<FileTabsState>();
+        let mut store = state
+            .tabs
+            .lock()
+            .map_err(|_| "failed to lock tabs state".to_string())?;
+        store.windows.insert(label.clone(), default_tabs_model());
+        persist_tabs_store(&store);
+    }
+    if let Err(error) = ensure_browser_window(app, &label) {
+        let state = app.state::<FileTabsState>();
+        if let Ok(mut store) = state.tabs.lock() {
+            store.windows.remove(&label);
+            persist_tabs_store(&store);
+        }
+        return Err(error.to_string());
+    }
+    Ok(())
+}
+
+fn ensure_browser_window<R: Runtime>(
+    app: &AppHandle<R>,
+    window_label: &str,
+) -> Result<tauri::WebviewWindow<R>, tauri::Error> {
+    if let Some(window) = app.get_webview_window(window_label) {
+        return Ok(window);
+    }
+    let window = WebviewWindowBuilder::new(app, window_label, WebviewUrl::App("index.html".into()))
+        .title("Lumen")
+        .inner_size(800.0, 680.0)
+        .build()?;
+    if let Some(geometry) = saved_geometry_for_label(app, window_label) {
+        let _ = window.set_size(PhysicalSize::new(geometry.width, geometry.height));
+        let _ = window.set_position(PhysicalPosition::new(geometry.x, geometry.y));
+    }
+    Ok(window)
+}
+
+fn next_window_label<R: Runtime>(app: &AppHandle<R>) -> String {
+    let mut index = 2u64;
+    let stored_labels = {
+        let state = app.state::<FileTabsState>();
+        state
+            .tabs
+            .lock()
+            .map(|store| store.windows.keys().cloned().collect::<BTreeSet<_>>())
+            .unwrap_or_default()
+    };
+    loop {
+        let candidate = format!("main-{index}");
+        if app.get_webview_window(&candidate).is_none() && !stored_labels.contains(&candidate) {
+            return candidate;
+        }
+        index = index.saturating_add(1);
+    }
 }
 
 fn active_tab_mut(model: &mut TabsModel) -> Option<&mut TabState> {
@@ -2241,6 +2444,7 @@ pub struct FileContextMenuState {
 
 #[derive(Debug, Clone)]
 pub struct PendingContextTarget {
+    pub window_label: String,
     pub paths: Vec<String>,
     pub relative_paths: Vec<String>,
 }
@@ -2254,36 +2458,44 @@ impl Default for FileContextMenuState {
 }
 
 #[tauri::command]
-pub fn index(state: State<'_, FileTabsState>) -> String {
+pub fn index(window: Window, state: State<'_, FileTabsState>) -> String {
     let home = home_directory();
-    let mut model = match state.tabs.lock() {
-        Ok(model) => model,
+    let window_label = window.label().to_string();
+    let mut store = match state.tabs.lock() {
+        Ok(store) => store,
         Err(_) => return String::new(),
     };
-    ensure_tabs(&mut model, &home);
-    persist_tabs_model(&model);
-    render_view(&model)
+    let rendered = {
+        let model = ensure_window_tabs_model(&mut store, &window_label, &home);
+        render_view(model)
+    };
+    persist_tabs_store(&store);
+    rendered
 }
 
 #[tauri::command]
-pub fn navigate(state: State<'_, FileTabsState>, path: String) -> String {
+pub fn navigate(window: Window, state: State<'_, FileTabsState>, path: String) -> String {
     let home = home_directory();
-    let mut model = match state.tabs.lock() {
-        Ok(model) => model,
+    let window_label = window.label().to_string();
+    let mut store = match state.tabs.lock() {
+        Ok(store) => store,
         Err(_) => return String::new(),
     };
-    ensure_tabs(&mut model, &home);
-
-    let normalized = normalize_tab_path(&home, Some(&path));
-    if let Some(tab) = active_tab_mut(&mut model) {
-        let root = active_tab_root_path(tab, &home);
-        if normalized.starts_with(&root) {
-            tab.focus_path = Some(normalized.to_string_lossy().to_string());
+    let rendered = {
+        let model = ensure_window_tabs_model(&mut store, &window_label, &home);
+        let normalized = normalize_tab_path(&home, Some(&path));
+        if let Some(tab) = active_tab_mut(model) {
+            let root = active_tab_root_path(tab, &home);
+            if normalized.starts_with(&root) {
+                tab.focus_path = Some(normalized.to_string_lossy().to_string());
+            }
         }
-    }
 
-    persist_tabs_model(&model);
-    render_view(&model)
+        render_view(model)
+    };
+
+    persist_tabs_store(&store);
+    rendered
 }
 
 #[tauri::command]
@@ -2294,165 +2506,177 @@ pub fn validate_location_path(path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn go_to_location(state: State<'_, FileTabsState>, path: String) -> Result<String, String> {
+pub fn new_window(app: AppHandle) -> Result<(), String> {
+    open_new_window(&app)
+}
+
+#[tauri::command]
+pub fn go_to_location(
+    window: Window,
+    state: State<'_, FileTabsState>,
+    path: String,
+) -> Result<String, String> {
     let home = home_directory();
-    let mut model = state
+    let target = resolve_location_input_path(&home, &path)?;
+    let window_label = window.label().to_string();
+    let mut store = state
         .tabs
         .lock()
         .map_err(|_| "failed to lock tabs state".to_string())?;
-    ensure_tabs(&mut model, &home);
+    let rendered = {
+        let model = ensure_window_tabs_model(&mut store, &window_label, &home);
 
-    let target = resolve_location_input_path(&home, &path)?;
+        if let Some(tab) = active_tab_mut(model) {
+            let current_root = active_tab_root_path(tab, &home);
+            if !target.starts_with(&current_root) {
+                tab.root_path = Some("/".to_string());
+            }
+            let effective_root = active_tab_root_path(tab, &home);
+            if has_hidden_component_between(&effective_root, &target) {
+                tab.show_hidden = true;
+            }
+            if target.starts_with(&effective_root) {
+                tab.focus_path = Some(target.to_string_lossy().to_string());
+            }
+        }
 
-    if let Some(tab) = active_tab_mut(&mut model) {
-        let current_root = active_tab_root_path(tab, &home);
-        if !target.starts_with(&current_root) {
-            tab.root_path = Some("/".to_string());
-        }
-        let effective_root = active_tab_root_path(tab, &home);
-        if has_hidden_component_between(&effective_root, &target) {
-            tab.show_hidden = true;
-        }
-        if target.starts_with(&effective_root) {
-            tab.focus_path = Some(target.to_string_lossy().to_string());
-        }
-    }
-
-    persist_tabs_model(&model);
-    Ok(render_view(&model))
+        render_view(model)
+    };
+    persist_tabs_store(&store);
+    Ok(rendered)
 }
 
 #[tauri::command]
-pub fn activate_tab(state: State<'_, FileTabsState>, tab_id: String) -> String {
+pub fn activate_tab(window: Window, state: State<'_, FileTabsState>, tab_id: String) -> String {
     let home = home_directory();
-    let mut model = match state.tabs.lock() {
-        Ok(model) => model,
+    let window_label = window.label().to_string();
+    let mut store = match state.tabs.lock() {
+        Ok(store) => store,
         Err(_) => return String::new(),
     };
-    ensure_tabs(&mut model, &home);
-
-    if let Ok(parsed_id) = tab_id.parse::<u64>() {
-        if model.tabs.iter().any(|tab| tab.id == parsed_id) {
-            model.active_id = parsed_id;
+    let rendered = {
+        let model = ensure_window_tabs_model(&mut store, &window_label, &home);
+        if let Ok(parsed_id) = tab_id.parse::<u64>() {
+            if model.tabs.iter().any(|tab| tab.id == parsed_id) {
+                model.active_id = parsed_id;
+            }
         }
-    }
 
-    persist_tabs_model(&model);
-    render_view(&model)
+        render_view(model)
+    };
+    persist_tabs_store(&store);
+    rendered
 }
 
 #[tauri::command]
-pub fn new_tab(state: State<'_, FileTabsState>, _path: String) -> String {
+pub fn new_tab(window: Window, state: State<'_, FileTabsState>, _path: String) -> String {
     let home = home_directory();
-    let mut model = match state.tabs.lock() {
-        Ok(model) => model,
+    let window_label = window.label().to_string();
+    let mut store = match state.tabs.lock() {
+        Ok(store) => store,
         Err(_) => return String::new(),
     };
-    ensure_tabs(&mut model, &home);
-
-    let id = model.next_id;
-    model.next_id += 1;
-    model.tabs.push(TabState {
-        id,
-        root_path: None,
-        focus_path: None,
-        show_hidden: false,
-    });
-    model.active_id = id;
-
-    persist_tabs_model(&model);
-    render_view(&model)
+    let rendered = {
+        let model = ensure_window_tabs_model(&mut store, &window_label, &home);
+        let id = model.next_id;
+        model.next_id += 1;
+        model.tabs.push(TabState {
+            id,
+            root_path: None,
+            focus_path: None,
+            show_hidden: false,
+        });
+        model.active_id = id;
+        render_view(model)
+    };
+    persist_tabs_store(&store);
+    rendered
 }
 
 #[tauri::command]
-pub fn close_tab(state: State<'_, FileTabsState>, tab_id: String) -> String {
+pub fn close_tab(window: Window, state: State<'_, FileTabsState>, tab_id: String) -> String {
     let home = home_directory();
-    let mut model = match state.tabs.lock() {
-        Ok(model) => model,
+    let window_label = window.label().to_string();
+    let mut store = match state.tabs.lock() {
+        Ok(store) => store,
         Err(_) => return String::new(),
     };
-    ensure_tabs(&mut model, &home);
-
-    let Ok(parsed_id) = tab_id.parse::<u64>() else {
-        return render_view(&model);
-    };
-
-    let Some(index) = model.tabs.iter().position(|tab| tab.id == parsed_id) else {
-        return render_view(&model);
-    };
-
-    if model.tabs.len() == 1 {
-        model.tabs[0].root_path = None;
-        model.tabs[0].focus_path = None;
-        model.active_id = model.tabs[0].id;
-        persist_tabs_model(&model);
-        return render_view(&model);
-    }
-
-    model.tabs.remove(index);
-
-    if model.active_id == parsed_id {
-        let new_index = if index == 0 { 0 } else { index - 1 };
-        model.active_id = model.tabs[new_index].id;
-    } else if !model.tabs.iter().any(|tab| tab.id == model.active_id) {
-        model.active_id = model.tabs[0].id;
-    }
-
-    persist_tabs_model(&model);
-    render_view(&model)
-}
-
-#[tauri::command]
-pub fn reorder_tabs(state: State<'_, FileTabsState>, tab_ids: String) -> String {
-    let home = home_directory();
-    let mut model = match state.tabs.lock() {
-        Ok(model) => model,
-        Err(_) => return String::new(),
-    };
-    ensure_tabs(&mut model, &home);
-
-    let requested: Vec<u64> = tab_ids
-        .split(',')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .filter_map(|value| value.parse::<u64>().ok())
-        .collect();
-    if requested.is_empty() {
-        return render_view(&model);
-    }
-
-    let mut remaining = std::mem::take(&mut model.tabs);
-    let mut reordered: Vec<TabState> = Vec::with_capacity(remaining.len());
-
-    for id in requested {
-        if let Some(index) = remaining.iter().position(|tab| tab.id == id) {
-            reordered.push(remaining.remove(index));
+    let rendered = {
+        let model = ensure_window_tabs_model(&mut store, &window_label, &home);
+        if let Ok(parsed_id) = tab_id.parse::<u64>() {
+            if let Some(index) = model.tabs.iter().position(|tab| tab.id == parsed_id) {
+                if model.tabs.len() == 1 {
+                    model.tabs[0].root_path = None;
+                    model.tabs[0].focus_path = None;
+                    model.active_id = model.tabs[0].id;
+                } else {
+                    model.tabs.remove(index);
+                    if model.active_id == parsed_id {
+                        let new_index = if index == 0 { 0 } else { index - 1 };
+                        model.active_id = model.tabs[new_index].id;
+                    } else if !model.tabs.iter().any(|tab| tab.id == model.active_id) {
+                        model.active_id = model.tabs[0].id;
+                    }
+                }
+            }
         }
-    }
-    reordered.extend(remaining);
-    model.tabs = reordered;
+        render_view(model)
+    };
 
-    if !model.tabs.iter().any(|tab| tab.id == model.active_id) {
-        model.active_id = model.tabs.first().map(|tab| tab.id).unwrap_or(1);
-    }
+    persist_tabs_store(&store);
+    rendered
+}
 
-    persist_tabs_model(&model);
-    render_view(&model)
+#[tauri::command]
+pub fn reorder_tabs(window: Window, state: State<'_, FileTabsState>, tab_ids: String) -> String {
+    let home = home_directory();
+    let window_label = window.label().to_string();
+    let mut store = match state.tabs.lock() {
+        Ok(store) => store,
+        Err(_) => return String::new(),
+    };
+    let rendered = {
+        let model = ensure_window_tabs_model(&mut store, &window_label, &home);
+        let requested: Vec<u64> = tab_ids
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .filter_map(|value| value.parse::<u64>().ok())
+            .collect();
+        if !requested.is_empty() {
+            let mut remaining = std::mem::take(&mut model.tabs);
+            let mut reordered: Vec<TabState> = Vec::with_capacity(remaining.len());
+            for id in requested {
+                if let Some(index) = remaining.iter().position(|tab| tab.id == id) {
+                    reordered.push(remaining.remove(index));
+                }
+            }
+            reordered.extend(remaining);
+            model.tabs = reordered;
+            if !model.tabs.iter().any(|tab| tab.id == model.active_id) {
+                model.active_id = model.tabs.first().map(|tab| tab.id).unwrap_or(1);
+            }
+        }
+        render_view(model)
+    };
+    persist_tabs_store(&store);
+    rendered
 }
 
 #[tauri::command]
 pub fn drop_files_into_directory(
+    window: Window,
     state: State<'_, FileTabsState>,
     target_dir: String,
     source_paths: Vec<String>,
     operation: String,
 ) -> Result<String, String> {
     let home = home_directory();
-    let mut model = state
+    let window_label = window.label().to_string();
+    let mut store = state
         .tabs
         .lock()
         .map_err(|_| "failed to lock tabs state".to_string())?;
-    ensure_tabs(&mut model, &home);
 
     let op = operation.to_ascii_lowercase();
     if op != "copy" && op != "move" {
@@ -2462,14 +2686,18 @@ pub fn drop_files_into_directory(
     let target = normalize_tab_path(&home, Some(&target_dir));
     perform_drop_operation(&home, &target, &source_paths, &op)?;
 
-    if let Some(tab) = active_tab_mut(&mut model) {
-        let root = active_tab_root_path(tab, &home);
-        if target.starts_with(&root) {
-            tab.focus_path = Some(target.to_string_lossy().to_string());
+    let rendered = {
+        let model = ensure_window_tabs_model(&mut store, &window_label, &home);
+        if let Some(tab) = active_tab_mut(model) {
+            let root = active_tab_root_path(tab, &home);
+            if target.starts_with(&root) {
+                tab.focus_path = Some(target.to_string_lossy().to_string());
+            }
         }
-    }
-    persist_tabs_model(&model);
-    Ok(render_view(&model))
+        render_view(model)
+    };
+    persist_tabs_store(&store);
+    Ok(rendered)
 }
 
 #[tauri::command]
@@ -2485,11 +2713,12 @@ pub fn show_file_context_menu(
     y: f64,
 ) -> Result<(), String> {
     let home = home_directory();
-    let mut model = tabs_state
+    let window_label = window.label().to_string();
+    let mut store = tabs_state
         .tabs
         .lock()
         .map_err(|_| "failed to lock tabs state".to_string())?;
-    ensure_tabs(&mut model, &home);
+    let model = ensure_window_tabs_model(&mut store, &window_label, &home);
     let active_tab = model
         .tabs
         .iter()
@@ -2497,7 +2726,7 @@ pub fn show_file_context_menu(
         .or_else(|| model.tabs.first())
         .ok_or_else(|| "missing active tab".to_string())?;
     let root = active_tab_root_path(active_tab, &home);
-    drop(model);
+    drop(store);
 
     let path_buf = PathBuf::from(&path);
     let is_multi_selection = selection_count > 1;
@@ -2527,6 +2756,7 @@ pub fn show_file_context_menu(
         .lock()
         .map_err(|_| "failed to lock context menu state".to_string())?;
     *pending = Some(PendingContextTarget {
+        window_label,
         paths,
         relative_paths,
     });
@@ -2583,16 +2813,17 @@ pub fn show_file_context_menu(
 
 #[tauri::command]
 pub fn rename_path(
+    window: Window,
     state: State<'_, FileTabsState>,
     path: String,
     new_name: String,
 ) -> Result<String, String> {
     let home = home_directory();
-    let mut model = state
+    let window_label = window.label().to_string();
+    let mut store = state
         .tabs
         .lock()
         .map_err(|_| "failed to lock tabs state".to_string())?;
-    ensure_tabs(&mut model, &home);
 
     let source = resolve_home_scoped_path(&home, &path)?;
     if source == home {
@@ -2612,19 +2843,27 @@ pub fn rename_path(
     if destination != source {
         fs::rename(&source, &destination).map_err(|error| error.to_string())?;
     }
-    set_active_focus_after_path_change(&mut model, &home, Some(&destination), &source);
-    persist_tabs_model(&model);
-    Ok(render_view(&model))
+    let rendered = {
+        let model = ensure_window_tabs_model(&mut store, &window_label, &home);
+        set_active_focus_after_path_change(model, &home, Some(&destination), &source);
+        render_view(model)
+    };
+    persist_tabs_store(&store);
+    Ok(rendered)
 }
 
 #[tauri::command]
-pub fn trash_path(state: State<'_, FileTabsState>, path: String) -> Result<String, String> {
+pub fn trash_path(
+    window: Window,
+    state: State<'_, FileTabsState>,
+    path: String,
+) -> Result<String, String> {
     let home = home_directory();
-    let mut model = state
+    let window_label = window.label().to_string();
+    let mut store = state
         .tabs
         .lock()
         .map_err(|_| "failed to lock tabs state".to_string())?;
-    ensure_tabs(&mut model, &home);
 
     let source = resolve_home_scoped_path(&home, &path)?;
     if source == home {
@@ -2634,9 +2873,13 @@ pub fn trash_path(state: State<'_, FileTabsState>, path: String) -> Result<Strin
         return Err("path does not exist".to_string());
     }
     move_to_trash(&source)?;
-    set_active_focus_after_path_change(&mut model, &home, None, &source);
-    persist_tabs_model(&model);
-    Ok(render_view(&model))
+    let rendered = {
+        let model = ensure_window_tabs_model(&mut store, &window_label, &home);
+        set_active_focus_after_path_change(model, &home, None, &source);
+        render_view(model)
+    };
+    persist_tabs_store(&store);
+    Ok(rendered)
 }
 
 fn parse_paths_json_arg(paths_json: &str) -> Result<Vec<String>, String> {
@@ -2695,15 +2938,17 @@ fn directory_listing_signature(path: &Path, show_hidden: bool) -> u64 {
 
 #[tauri::command]
 pub fn visible_directories_signature(
+    window: Window,
     tabs_state: State<'_, FileTabsState>,
     paths_json: String,
 ) -> Result<String, String> {
     let home = home_directory();
-    let mut model = tabs_state
+    let window_label = window.label().to_string();
+    let mut store = tabs_state
         .tabs
         .lock()
         .map_err(|_| "failed to lock tabs state".to_string())?;
-    ensure_tabs(&mut model, &home);
+    let model = ensure_window_tabs_model(&mut store, &window_label, &home);
     let show_hidden = model
         .tabs
         .iter()
@@ -2711,7 +2956,7 @@ pub fn visible_directories_signature(
         .or_else(|| model.tabs.first())
         .map(|tab| tab.show_hidden)
         .unwrap_or(false);
-    drop(model);
+    drop(store);
 
     let paths = parse_paths_json_arg(&paths_json)?;
     let mut hasher = DefaultHasher::new();
@@ -2726,38 +2971,50 @@ pub fn visible_directories_signature(
 }
 
 #[tauri::command]
-pub fn trash_paths(state: State<'_, FileTabsState>, paths_json: String) -> Result<String, String> {
+pub fn trash_paths(
+    window: Window,
+    state: State<'_, FileTabsState>,
+    paths_json: String,
+) -> Result<String, String> {
     let home = home_directory();
-    let mut model = state
+    let window_label = window.label().to_string();
+    let mut store = state
         .tabs
         .lock()
         .map_err(|_| "failed to lock tabs state".to_string())?;
-    ensure_tabs(&mut model, &home);
 
     let paths = parse_paths_json_arg(&paths_json)?;
-    for path in &paths {
-        let source = resolve_home_scoped_path(&home, path)?;
-        if source == home {
-            return Err("cannot trash root directory".to_string());
+    let rendered = {
+        let model = ensure_window_tabs_model(&mut store, &window_label, &home);
+        for path in &paths {
+            let source = resolve_home_scoped_path(&home, path)?;
+            if source == home {
+                return Err("cannot trash root directory".to_string());
+            }
+            if !source.exists() {
+                return Err("path does not exist".to_string());
+            }
+            move_to_trash(&source)?;
+            set_active_focus_after_path_change(model, &home, None, &source);
         }
-        if !source.exists() {
-            return Err("path does not exist".to_string());
-        }
-        move_to_trash(&source)?;
-        set_active_focus_after_path_change(&mut model, &home, None, &source);
-    }
-    persist_tabs_model(&model);
-    Ok(render_view(&model))
+        render_view(model)
+    };
+    persist_tabs_store(&store);
+    Ok(rendered)
 }
 
 #[tauri::command]
-pub fn delete_path(state: State<'_, FileTabsState>, path: String) -> Result<String, String> {
+pub fn delete_path(
+    window: Window,
+    state: State<'_, FileTabsState>,
+    path: String,
+) -> Result<String, String> {
     let home = home_directory();
-    let mut model = state
+    let window_label = window.label().to_string();
+    let mut store = state
         .tabs
         .lock()
         .map_err(|_| "failed to lock tabs state".to_string())?;
-    ensure_tabs(&mut model, &home);
 
     let source = resolve_home_scoped_path(&home, &path)?;
     if source == home {
@@ -2767,48 +3024,61 @@ pub fn delete_path(state: State<'_, FileTabsState>, path: String) -> Result<Stri
         return Err("path does not exist".to_string());
     }
     remove_permanently(&source)?;
-    set_active_focus_after_path_change(&mut model, &home, None, &source);
-    persist_tabs_model(&model);
-    Ok(render_view(&model))
+    let rendered = {
+        let model = ensure_window_tabs_model(&mut store, &window_label, &home);
+        set_active_focus_after_path_change(model, &home, None, &source);
+        render_view(model)
+    };
+    persist_tabs_store(&store);
+    Ok(rendered)
 }
 
 #[tauri::command]
-pub fn delete_paths(state: State<'_, FileTabsState>, paths_json: String) -> Result<String, String> {
+pub fn delete_paths(
+    window: Window,
+    state: State<'_, FileTabsState>,
+    paths_json: String,
+) -> Result<String, String> {
     let home = home_directory();
-    let mut model = state
+    let window_label = window.label().to_string();
+    let mut store = state
         .tabs
         .lock()
         .map_err(|_| "failed to lock tabs state".to_string())?;
-    ensure_tabs(&mut model, &home);
 
     let paths = parse_paths_json_arg(&paths_json)?;
-    for path in &paths {
-        let source = resolve_home_scoped_path(&home, path)?;
-        if source == home {
-            return Err("cannot delete root directory".to_string());
+    let rendered = {
+        let model = ensure_window_tabs_model(&mut store, &window_label, &home);
+        for path in &paths {
+            let source = resolve_home_scoped_path(&home, path)?;
+            if source == home {
+                return Err("cannot delete root directory".to_string());
+            }
+            if !source.exists() {
+                return Err("path does not exist".to_string());
+            }
+            remove_permanently(&source)?;
+            set_active_focus_after_path_change(model, &home, None, &source);
         }
-        if !source.exists() {
-            return Err("path does not exist".to_string());
-        }
-        remove_permanently(&source)?;
-        set_active_focus_after_path_change(&mut model, &home, None, &source);
-    }
-    persist_tabs_model(&model);
-    Ok(render_view(&model))
+        render_view(model)
+    };
+    persist_tabs_store(&store);
+    Ok(rendered)
 }
 
 #[tauri::command]
 pub fn create_directory(
+    window: Window,
     state: State<'_, FileTabsState>,
     parent_path: String,
     name: String,
 ) -> Result<String, String> {
     let home = home_directory();
-    let mut model = state
+    let window_label = window.label().to_string();
+    let mut store = state
         .tabs
         .lock()
         .map_err(|_| "failed to lock tabs state".to_string())?;
-    ensure_tabs(&mut model, &home);
 
     let parent = resolve_home_scoped_path(&home, &parent_path)?;
     if !parent.is_dir() {
@@ -2820,23 +3090,28 @@ pub fn create_directory(
         return Err("destination already exists".to_string());
     }
     fs::create_dir(&target).map_err(|error| error.to_string())?;
-    set_active_focus_after_path_change(&mut model, &home, Some(&target), &parent);
-    persist_tabs_model(&model);
-    Ok(render_view(&model))
+    let rendered = {
+        let model = ensure_window_tabs_model(&mut store, &window_label, &home);
+        set_active_focus_after_path_change(model, &home, Some(&target), &parent);
+        render_view(model)
+    };
+    persist_tabs_store(&store);
+    Ok(rendered)
 }
 
 #[tauri::command]
 pub fn create_file(
+    window: Window,
     state: State<'_, FileTabsState>,
     parent_path: String,
     name: String,
 ) -> Result<String, String> {
     let home = home_directory();
-    let mut model = state
+    let window_label = window.label().to_string();
+    let mut store = state
         .tabs
         .lock()
         .map_err(|_| "failed to lock tabs state".to_string())?;
-    ensure_tabs(&mut model, &home);
 
     let parent = resolve_home_scoped_path(&home, &parent_path)?;
     if !parent.is_dir() {
@@ -2848,23 +3123,28 @@ pub fn create_file(
         return Err("destination already exists".to_string());
     }
     fs::File::create(&target).map_err(|error| error.to_string())?;
-    set_active_focus_after_path_change(&mut model, &home, Some(&target), &parent);
-    persist_tabs_model(&model);
-    Ok(render_view(&model))
+    let rendered = {
+        let model = ensure_window_tabs_model(&mut store, &window_label, &home);
+        set_active_focus_after_path_change(model, &home, Some(&target), &parent);
+        render_view(model)
+    };
+    persist_tabs_store(&store);
+    Ok(rendered)
 }
 
 #[tauri::command]
 pub fn set_directory_sort(
+    window: Window,
     state: State<'_, FileTabsState>,
     path: String,
     mode: String,
 ) -> Result<String, String> {
     let home = home_directory();
-    let mut model = state
+    let window_label = window.label().to_string();
+    let mut store = state
         .tabs
         .lock()
         .map_err(|_| "failed to lock tabs state".to_string())?;
-    ensure_tabs(&mut model, &home);
 
     let directory = resolve_home_scoped_path(&home, &path)?;
     if !directory.is_dir() {
@@ -2872,28 +3152,33 @@ pub fn set_directory_sort(
     }
     let parsed_mode =
         DirectorySortMode::from_input(&mode).ok_or_else(|| "invalid sort mode".to_string())?;
-    let key = directory.to_string_lossy().to_string();
-    if parsed_mode == DirectorySortMode::Alphabetical {
-        model.directory_sorts.remove(&key);
-    } else {
-        model.directory_sorts.insert(key, parsed_mode);
-    }
+    let rendered = {
+        let model = ensure_window_tabs_model(&mut store, &window_label, &home);
+        let key = directory.to_string_lossy().to_string();
+        if parsed_mode == DirectorySortMode::Alphabetical {
+            model.directory_sorts.remove(&key);
+        } else {
+            model.directory_sorts.insert(key, parsed_mode);
+        }
+        render_view(model)
+    };
 
-    persist_tabs_model(&model);
-    Ok(render_view(&model))
+    persist_tabs_store(&store);
+    Ok(rendered)
 }
 
 #[tauri::command]
 pub fn set_tab_show_hidden(
+    window: Window,
     state: State<'_, FileTabsState>,
     show_hidden: String,
 ) -> Result<String, String> {
     let home = home_directory();
-    let mut model = state
+    let window_label = window.label().to_string();
+    let mut store = state
         .tabs
         .lock()
         .map_err(|_| "failed to lock tabs state".to_string())?;
-    ensure_tabs(&mut model, &home);
 
     let parsed = match show_hidden.trim().to_ascii_lowercase().as_str() {
         "true" | "1" | "yes" | "on" => true,
@@ -2901,41 +3186,51 @@ pub fn set_tab_show_hidden(
         _ => return Err("invalid show_hidden value".to_string()),
     };
 
-    if let Some(tab) = active_tab_mut(&mut model) {
-        tab.show_hidden = parsed;
-    }
-    persist_tabs_model(&model);
-    Ok(render_view(&model))
+    let rendered = {
+        let model = ensure_window_tabs_model(&mut store, &window_label, &home);
+        if let Some(tab) = active_tab_mut(model) {
+            tab.show_hidden = parsed;
+        }
+        render_view(model)
+    };
+    persist_tabs_store(&store);
+    Ok(rendered)
 }
 
 #[tauri::command]
 pub fn fuzzy_search_start(
+    window: Window,
     tabs_state: State<'_, FileTabsState>,
     search_state: State<'_, FileSearchState>,
     query: String,
 ) -> Result<(), String> {
     let home = home_directory();
-    let mut tabs = tabs_state
-        .tabs
-        .lock()
-        .map_err(|_| "failed to lock tabs state".to_string())?;
-    ensure_tabs(&mut tabs, &home);
-    let active_tab = tabs
-        .tabs
-        .iter()
-        .find(|tab| tab.id == tabs.active_id)
-        .or_else(|| tabs.tabs.first())
-        .ok_or_else(|| "missing active tab".to_string())?;
-    let root = active_tab_root_path(active_tab, &home);
-    let show_hidden = active_tab.show_hidden;
-    drop(tabs);
+    let window_label = window.label().to_string();
+    let (root, show_hidden) = {
+        let mut store = tabs_state
+            .tabs
+            .lock()
+            .map_err(|_| "failed to lock tabs state".to_string())?;
+        let model = ensure_window_tabs_model(&mut store, &window_label, &home);
+        let active_tab = model
+            .tabs
+            .iter()
+            .find(|tab| tab.id == model.active_id)
+            .or_else(|| model.tabs.first())
+            .ok_or_else(|| "missing active tab".to_string())?;
+        (
+            active_tab_root_path(active_tab, &home),
+            active_tab.show_hidden,
+        )
+    };
 
     let trimmed = query.trim().to_string();
     let shared = search_state.search.clone();
     let generation = {
-        let mut search = shared
+        let mut searches = shared
             .lock()
             .map_err(|_| "failed to lock search state".to_string())?;
+        let search = search_model_mut(&mut searches, &window_label);
         search.generation = search.generation.saturating_add(1);
         search.query = trimmed.clone();
         search.root_path = root.to_string_lossy().to_string();
@@ -2949,18 +3244,31 @@ pub fn fuzzy_search_start(
         return Ok(());
     }
 
+    let worker_window_label = window_label.clone();
     std::thread::spawn(move || {
-        run_fuzzy_search_worker(shared, generation, root, trimmed, show_hidden);
+        run_fuzzy_search_worker(
+            shared,
+            worker_window_label,
+            generation,
+            root,
+            trimmed,
+            show_hidden,
+        );
     });
     Ok(())
 }
 
 #[tauri::command]
-pub fn fuzzy_search_cancel(search_state: State<'_, FileSearchState>) -> Result<(), String> {
-    let mut search = search_state
+pub fn fuzzy_search_cancel(
+    window: Window,
+    search_state: State<'_, FileSearchState>,
+) -> Result<(), String> {
+    let window_label = window.label().to_string();
+    let mut searches = search_state
         .search
         .lock()
         .map_err(|_| "failed to lock search state".to_string())?;
+    let search = search_model_mut(&mut searches, &window_label);
     search.generation = search.generation.saturating_add(1);
     search.query.clear();
     search.running = false;
@@ -2970,11 +3278,13 @@ pub fn fuzzy_search_cancel(search_state: State<'_, FileSearchState>) -> Result<(
 }
 
 #[tauri::command]
-pub fn fuzzy_search_results(search_state: State<'_, FileSearchState>) -> String {
+pub fn fuzzy_search_results(window: Window, search_state: State<'_, FileSearchState>) -> String {
+    let window_label = window.label().to_string();
     let (query, running, scanned, results) = {
-        let Ok(search) = search_state.search.lock() else {
+        let Ok(mut searches) = search_state.search.lock() else {
             return String::new();
         };
+        let search = search_model_mut(&mut searches, &window_label);
         (
             search.query.clone(),
             search.running,
@@ -3214,20 +3524,24 @@ pub fn open_in_finder(path: String) -> Result<(), String> {
 
 #[tauri::command]
 pub fn open_in_github_desktop(
+    window: Window,
     path: String,
     tabs_state: State<'_, FileTabsState>,
 ) -> Result<(), String> {
-    let tab_root = active_tab_root_for_state(&tabs_state)?;
+    let tab_root = active_tab_root_for_state(&tabs_state, window.label())?;
     open_in_github_desktop_with_tab_root(path, tab_root)
 }
 
-fn active_tab_root_for_state(tabs_state: &State<'_, FileTabsState>) -> Result<PathBuf, String> {
+fn active_tab_root_for_state(
+    tabs_state: &State<'_, FileTabsState>,
+    window_label: &str,
+) -> Result<PathBuf, String> {
     let home = home_directory();
-    let mut model = tabs_state
+    let mut store = tabs_state
         .tabs
         .lock()
         .map_err(|_| "failed to lock tabs state".to_string())?;
-    ensure_tabs(&mut model, &home);
+    let model = ensure_window_tabs_model(&mut store, window_label, &home);
     Ok(model
         .tabs
         .iter()
@@ -3249,45 +3563,55 @@ fn open_in_github_desktop_with_tab_root(path: String, tab_root: PathBuf) -> Resu
 }
 
 #[tauri::command]
-pub fn set_tab_root(state: State<'_, FileTabsState>, path: String) -> Result<String, String> {
+pub fn set_tab_root(
+    window: Window,
+    state: State<'_, FileTabsState>,
+    path: String,
+) -> Result<String, String> {
     let home = home_directory();
-    let mut model = state
+    let window_label = window.label().to_string();
+    let mut store = state
         .tabs
         .lock()
         .map_err(|_| "failed to lock tabs state".to_string())?;
-    ensure_tabs(&mut model, &home);
 
     let target = resolve_home_scoped_path(&home, &path)?;
     if !target.is_dir() {
         return Err("tab root must be a directory".to_string());
     }
-    if let Some(tab) = active_tab_mut(&mut model) {
-        if target == home {
-            tab.root_path = None;
-        } else {
-            tab.root_path = Some(target.to_string_lossy().to_string());
-        }
-        if let Some(focus) = tab.focus_path.clone().map(PathBuf::from) {
-            if !focus.starts_with(&target) {
-                tab.focus_path = None;
+    let rendered = {
+        let model = ensure_window_tabs_model(&mut store, &window_label, &home);
+        if let Some(tab) = active_tab_mut(model) {
+            if target == home {
+                tab.root_path = None;
+            } else {
+                tab.root_path = Some(target.to_string_lossy().to_string());
+            }
+            if let Some(focus) = tab.focus_path.clone().map(PathBuf::from) {
+                if !focus.starts_with(&target) {
+                    tab.focus_path = None;
+                }
             }
         }
-    }
-    persist_tabs_model(&model);
-    Ok(render_view(&model))
+        render_view(model)
+    };
+    persist_tabs_store(&store);
+    Ok(rendered)
 }
 
 #[tauri::command]
 pub fn path_context_capabilities(
+    window: Window,
     path: String,
     tabs_state: State<'_, FileTabsState>,
 ) -> Result<PathContextCapabilities, String> {
     let home = home_directory();
-    let mut model = tabs_state
+    let window_label = window.label().to_string();
+    let mut store = tabs_state
         .tabs
         .lock()
         .map_err(|_| "failed to lock tabs state".to_string())?;
-    ensure_tabs(&mut model, &home);
+    let model = ensure_window_tabs_model(&mut store, &window_label, &home);
     let tab_root = model
         .tabs
         .iter()
@@ -3295,7 +3619,7 @@ pub fn path_context_capabilities(
         .or_else(|| model.tabs.first())
         .map(|tab| active_tab_root_path(tab, &home))
         .unwrap_or_else(|| home.clone());
-    drop(model);
+    drop(store);
 
     let target = resolve_home_scoped_path(&home, &path)?;
     let is_dir = target.is_dir();

@@ -9,13 +9,13 @@ use std::collections::BTreeSet;
 use std::sync::Mutex;
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, Position, State, WebviewUrl,
-    WebviewWindowBuilder,
+    WebviewWindowBuilder, Window,
 };
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 #[tauri::command]
-fn root(state: State<'_, file_controller::FileTabsState>) -> String {
-    file_controller::index(state)
+fn root(window: Window, state: State<'_, file_controller::FileTabsState>) -> String {
+    file_controller::index(window, state)
 }
 
 #[derive(Default)]
@@ -170,6 +170,7 @@ pub fn run() {
         .manage(HoldState::default())
         .setup(|app| {
             file_controller::restore_main_window_state(&app.handle());
+            file_controller::restore_saved_additional_windows(&app.handle());
             let _ = ensure_hold_window(&app.handle());
             update_hold_window_visibility(&app.handle());
             Ok(())
@@ -180,13 +181,19 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { .. } => {
-                if window.label() == "main" {
-                    window.app_handle().exit(0);
+                if window.label() == "main" || window.label().starts_with("main-") {
+                    let app = window.app_handle();
+                    if file_controller::browser_window_count(&app) <= 1 {
+                        file_controller::persist_window_state(window);
+                        app.exit(0);
+                    } else {
+                        file_controller::remove_window_state(&app, window.label());
+                    }
                 }
             }
             tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Moved(_) => {
-                if window.label() == "main" {
-                    file_controller::persist_main_window_state(window);
+                if window.label() == "main" || window.label().starts_with("main-") {
+                    file_controller::persist_window_state(window);
                 }
             }
             tauri::WindowEvent::DragDrop(drag_event) => {
@@ -215,11 +222,12 @@ pub fn run() {
                     .pending
                     .lock()
                     .ok()
-                    .and_then(|pending| pending.clone())
+                    .and_then(|mut pending| pending.take())
             };
             let Some(pending) = path_to_copy else {
                 return;
             };
+            let target_window_label = pending.window_label;
             let absolute_paths = pending.paths;
             let relative_paths = pending.relative_paths;
             let first_path = absolute_paths.first().cloned().unwrap_or_default();
@@ -227,14 +235,14 @@ pub fn run() {
             let menu_id = event.id().as_ref();
             if menu_id == "copy_absolute_path" {
                 let _ = app.clipboard().write_text(absolute_paths.join("\n"));
-                if let Some(window) = app.get_webview_window("main") {
+                if let Some(window) = app.get_webview_window(&target_window_label) {
                     let _ = window.set_focus();
                 }
                 return;
             }
             if menu_id == "copy_relative_path" {
                 let _ = app.clipboard().write_text(relative_paths.join("\n"));
-                if let Some(window) = app.get_webview_window("main") {
+                if let Some(window) = app.get_webview_window(&target_window_label) {
                     let _ = window.set_focus();
                 }
                 return;
@@ -259,7 +267,7 @@ pub fn run() {
                     path: first_path.clone(),
                     paths: absolute_paths.clone(),
                 };
-                if let Some(window) = app.get_webview_window("main") {
+                if let Some(window) = app.get_webview_window(&target_window_label) {
                     if let Ok(payload_json) = serde_json::to_string(&payload) {
                         let script = format!(
                             "(function(){{\
@@ -294,6 +302,7 @@ pub fn run() {
             file_controller::index,
             file_controller::navigate,
             file_controller::validate_location_path,
+            file_controller::new_window,
             file_controller::go_to_location,
             file_controller::activate_tab,
             file_controller::new_tab,
