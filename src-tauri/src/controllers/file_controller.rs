@@ -1,5 +1,6 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use flate2::read::GzDecoder;
+use pulldown_cmark::{html, CowStr, Event, Options, Parser, Tag};
 use serde::Serialize;
 use std::{
     collections::{hash_map::DefaultHasher, BTreeMap, BTreeSet, HashMap},
@@ -813,6 +814,88 @@ fn is_previewable_text_ext(ext: &str) -> bool {
     )
 }
 
+fn markdown_image_data_url(markdown_path: &Path, destination: &str) -> Option<String> {
+    let raw = destination.trim();
+    if raw.is_empty() || raw.starts_with('#') {
+        return None;
+    }
+    if raw.starts_with("//") {
+        return None;
+    }
+    if raw
+        .chars()
+        .position(|ch| ch == ':')
+        .map(|index| {
+            let prefix = &raw[..index];
+            !prefix.is_empty()
+                && prefix
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.'))
+        })
+        .unwrap_or(false)
+    {
+        return None;
+    }
+
+    let path_part = raw
+        .split_once('?')
+        .map(|(value, _)| value)
+        .unwrap_or(raw)
+        .split_once('#')
+        .map(|(value, _)| value)
+        .unwrap_or(raw);
+
+    let source_path = {
+        let candidate = Path::new(path_part);
+        if candidate.is_absolute() {
+            candidate.to_path_buf()
+        } else {
+            markdown_path
+                .parent()
+                .map(|parent| parent.join(candidate))
+                .unwrap_or_else(|| candidate.to_path_buf())
+        }
+    };
+
+    let ext = source_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+    let mime = image_mime_from_ext(&ext)?;
+    let bytes = fs::read(&source_path).ok()?;
+    Some(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
+}
+
+fn render_markdown_preview_html(markdown: &str, markdown_path: &Path) -> String {
+    let options = Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_TABLES
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_FOOTNOTES;
+    let parser = Parser::new_ext(markdown, options).map(|event| match event {
+        Event::Start(Tag::Image {
+            link_type,
+            dest_url,
+            title,
+            id,
+        }) => {
+            let next_dest: CowStr<'_> = markdown_image_data_url(markdown_path, dest_url.as_ref())
+                .map(CowStr::from)
+                .unwrap_or(dest_url);
+            Event::Start(Tag::Image {
+                link_type,
+                dest_url: next_dest,
+                title,
+                id,
+            })
+        }
+        _ => event,
+    });
+    let mut html_out = String::new();
+    html::push_html(&mut html_out, parser);
+    html_out
+}
+
 fn is_probably_plain_text(path: &Path) -> bool {
     const SAMPLE_BYTES: usize = 8192;
     let Ok(file) = fs::File::open(path) else {
@@ -1250,8 +1333,18 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
         let mut limited = file.take(MAX_TEXT_PREVIEW_BYTES as u64);
         limited.read_to_end(&mut buffer).ok()?;
         let text = String::from_utf8_lossy(&buffer).to_string();
+        let is_markdown = ext == "md";
+        let content = if is_markdown {
+            render_markdown_preview_html(&text, path)
+        } else {
+            text
+        };
         return Some(PreviewModel {
-            kind: "text".to_string(),
+            kind: if is_markdown {
+                "markdown".to_string()
+            } else {
+                "text".to_string()
+            },
             title: file_name,
             subtitle,
             path: path.to_string_lossy().to_string(),
@@ -1262,7 +1355,7 @@ fn build_preview(focus_path: Option<&Path>) -> Option<PreviewModel> {
             glb_path: None,
             video_path: None,
             zip_entries: None,
-            text_head: Some(text),
+            text_head: Some(content),
             note: if file_size > MAX_TEXT_PREVIEW_BYTES as u64 {
                 Some("Showing the first 8MB.".to_string())
             } else {

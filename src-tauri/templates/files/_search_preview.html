@@ -6,7 +6,7 @@
   data-preview-name="{{ preview.title }}"
   data-preview-icon="{{ preview.icon }}"
   data-preview-is-dir="false"
-  data-preview-draggable="{% if preview.kind == "glb" %}false{% else %}true{% endif %}"
+  data-preview-draggable="{% if preview.kind == "glb" or preview.kind == "markdown" %}false{% else %}true{% endif %}"
 >
   <div class="preview-header">
     <div class="preview-title">{{ preview.title }}</div>
@@ -47,6 +47,8 @@
       <video class="preview-video" data-video-path="{{ preview.video_path }}" controls preload="metadata" hidden></video>
     {% elif preview.kind == "zip" %}
       <div class="preview-note">ZIP preview is available in the main pane.</div>
+    {% elif preview.kind == "markdown" and preview.text_head %}
+      <div class="preview-markdown">{{ preview.text_head | safe }}</div>
     {% elif preview.kind == "text" and preview.text_head %}
       <pre class="preview-text">{{ preview.text_head }}</pre>
     {% endif %}

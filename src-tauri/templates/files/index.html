@@ -226,6 +226,104 @@
       font-family: "SF Mono", "Menlo", "Consolas", monospace;
     }
 
+    .preview-markdown {
+      color: #d2dbec;
+      font-size: 13px;
+      line-height: 1.6;
+      background: rgba(17, 22, 32, 0.7);
+      border: 1px solid #46506a;
+      border-radius: 8px;
+      padding: 12px 14px;
+      user-select: text !important;
+      -webkit-user-select: text !important;
+      cursor: text;
+    }
+
+    .preview-markdown * {
+      user-select: text !important;
+      -webkit-user-select: text !important;
+    }
+
+    .preview-markdown img {
+      max-width: 100%;
+      -webkit-user-drag: none;
+      user-drag: none;
+    }
+
+    .preview-markdown > :first-child {
+      margin-top: 0;
+    }
+
+    .preview-markdown > :last-child {
+      margin-bottom: 0;
+    }
+
+    .preview-markdown h1,
+    .preview-markdown h2,
+    .preview-markdown h3,
+    .preview-markdown h4,
+    .preview-markdown h5,
+    .preview-markdown h6 {
+      color: #f0f4ff;
+      margin: 14px 0 8px;
+      line-height: 1.3;
+    }
+
+    .preview-markdown p,
+    .preview-markdown ul,
+    .preview-markdown ol,
+    .preview-markdown blockquote,
+    .preview-markdown pre,
+    .preview-markdown table {
+      margin: 10px 0;
+    }
+
+    .preview-markdown a {
+      color: #96c7ff;
+    }
+
+    .preview-markdown code {
+      font-family: "SF Mono", "Menlo", "Consolas", monospace;
+      font-size: 12px;
+      background: rgba(82, 100, 132, 0.35);
+      border-radius: 4px;
+      padding: 1px 5px;
+    }
+
+    .preview-markdown pre {
+      overflow: auto;
+      border: 1px solid #4f5c78;
+      border-radius: 7px;
+      background: rgba(12, 16, 26, 0.85);
+      padding: 10px;
+    }
+
+    .preview-markdown pre code {
+      background: transparent;
+      padding: 0;
+    }
+
+    .preview-markdown blockquote {
+      border-left: 3px solid #4f8cdf;
+      margin-left: 0;
+      padding: 0 0 0 10px;
+      color: #aec1e0;
+    }
+
+    .preview-markdown table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    .preview-markdown th,
+    .preview-markdown td {
+      border: 1px solid #4c5873;
+      padding: 6px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+
     .preview-zip-explorer {
       display: flex;
       gap: 10px;
@@ -932,12 +1030,12 @@
     {% if preview %}
     <aside
       class="preview-pane"
-      draggable="{% if preview.kind == "glb" %}false{% else %}true{% endif %}"
+      draggable="{% if preview.kind == "glb" or preview.kind == "markdown" %}false{% else %}true{% endif %}"
       data-preview-path="{{ preview.path }}"
       data-preview-name="{{ preview.title }}"
       data-preview-icon="{{ preview.icon }}"
       data-preview-is-dir="false"
-      data-preview-draggable="{% if preview.kind == "glb" %}false{% else %}true{% endif %}"
+      data-preview-draggable="{% if preview.kind == "glb" or preview.kind == "markdown" %}false{% else %}true{% endif %}"
     >
       <div class="preview-header">
         <div class="preview-title">{{ preview.title }}</div>
@@ -984,6 +1082,8 @@
               <div class="preview-zip-empty">Select a file to preview.</div>
             </div>
           </div>
+        {% elif preview.kind == "markdown" and preview.text_head %}
+          <div class="preview-markdown">{{ preview.text_head | safe }}</div>
         {% elif preview.kind == "text" and preview.text_head %}
           <pre class="preview-text">{{ preview.text_head }}</pre>
         {% endif %}
@@ -2157,6 +2257,162 @@
         if (encoded.startsWith("/")) return `file://${encoded}`;
         return `file:///${encoded}`;
       };
+      const pathToPreviewSrc = (path) => {
+        if (!path) return "";
+        const convertFileSrc = window.__TAURI__?.core?.convertFileSrc;
+        if (typeof convertFileSrc === "function") {
+          try {
+            return String(convertFileSrc(path) || "");
+          } catch (_error) {
+            // Fall back to file URI conversion below.
+          }
+        }
+        return pathToFileUri(path);
+      };
+      const normalizeFsPath = (value) => String(value || "").replace(/\\/g, "/");
+      const isWindowsAbsPath = (value) => /^[A-Za-z]:\//.test(value);
+      const isAbsoluteFsPath = (value) => value.startsWith("/") || isWindowsAbsPath(value);
+      const splitPathAndSuffix = (value) => {
+        const match = String(value || "").match(/^([^?#]*)([?#].*)?$/);
+        if (!match) return {pathPart: String(value || ""), suffix: ""};
+        return {pathPart: match[1] || "", suffix: match[2] || ""};
+      };
+      const dirnameFsPath = (path) => {
+        const normalized = normalizeFsPath(path);
+        const index = normalized.lastIndexOf("/");
+        if (index < 0) return "";
+        if (index === 0) return "/";
+        return normalized.slice(0, index);
+      };
+      const resolveFsPath = (baseDir, maybeRelativePath) => {
+        const relative = normalizeFsPath(maybeRelativePath || "");
+        if (!relative) return "";
+        if (isAbsoluteFsPath(relative)) return relative;
+        const base = normalizeFsPath(baseDir || "");
+        const basePrefix = base.endsWith("/") ? base.slice(0, -1) : base;
+        const joined = `${basePrefix}/${relative}`;
+        const isAbsolute = joined.startsWith("/");
+        const parts = joined.split("/");
+        const resolved = [];
+        for (const part of parts) {
+          if (!part || part === ".") continue;
+          if (part === "..") {
+            const last = resolved[resolved.length - 1] || "";
+            if (last && last !== ".." && !/^[A-Za-z]:$/.test(last)) {
+              resolved.pop();
+            } else if (!isAbsolute) {
+              resolved.push("..");
+            }
+            continue;
+          }
+          resolved.push(part);
+        }
+        if (isAbsolute) {
+          return `/${resolved.join("/")}`;
+        }
+        if (resolved.length > 0 && /^[A-Za-z]:$/.test(resolved[0])) {
+          return `${resolved[0]}/${resolved.slice(1).join("/")}`;
+        }
+        return resolved.join("/");
+      };
+      const rewriteMarkdownPreviewImages = (scopeRoot) => {
+        if (!scopeRoot) return;
+        const panes = [];
+        if (scopeRoot.matches?.(".preview-pane[data-preview-path]")) {
+          panes.push(scopeRoot);
+        }
+        panes.push(...scopeRoot.querySelectorAll(".preview-pane[data-preview-path]"));
+        for (const pane of panes) {
+          const markdownImages = pane.querySelectorAll(".preview-markdown img[src]");
+          if (!markdownImages.length) continue;
+          const markdownPath = String(pane.dataset.previewPath || "");
+          if (!markdownPath) continue;
+          const baseDir = dirnameFsPath(markdownPath);
+          for (const image of markdownImages) {
+            const rawSrc = String(image.getAttribute("src") || "").trim();
+            if (!rawSrc) continue;
+            if (rawSrc.startsWith("#")) continue;
+            if (rawSrc.startsWith("//")) continue;
+            if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(rawSrc)) continue;
+            const {pathPart, suffix} = splitPathAndSuffix(rawSrc);
+            if (!pathPart) continue;
+            const absolutePath = resolveFsPath(baseDir, pathPart);
+            if (!absolutePath) continue;
+            const previewSrc = pathToPreviewSrc(absolutePath);
+            if (!previewSrc) continue;
+            image.src = `${previewSrc}${suffix}`;
+          }
+        }
+      };
+      const rewriteMarkdownPreviewLinks = (scopeRoot) => {
+        if (!scopeRoot) return;
+        const links = scopeRoot.querySelectorAll(".preview-markdown a[href]");
+        for (const link of links) {
+          link.setAttribute("target", "_blank");
+          link.setAttribute("rel", "noopener noreferrer");
+        }
+      };
+      const fileUriToPath = (uri) => {
+        try {
+          const parsed = new URL(uri);
+          if (parsed.protocol !== "file:") return "";
+          const pathname = decodeURIComponent(parsed.pathname || "");
+          if (/^\/[A-Za-z]:\//.test(pathname)) {
+            return pathname.slice(1);
+          }
+          return pathname || "";
+        } catch (_error) {
+          return "";
+        }
+      };
+      const openMarkdownLinkExternally = async (anchor) => {
+        if (!anchor) return;
+        const opener = window.__TAURI__?.opener;
+        const openUrl = opener?.openUrl;
+        const openPath = opener?.openPath;
+        const rawHref = String(anchor.getAttribute("href") || "").trim();
+        if (!rawHref || rawHref.startsWith("#")) return;
+
+        if (rawHref.startsWith("//")) {
+          if (typeof openUrl === "function") {
+            await openUrl(`https:${rawHref}`);
+          }
+          return;
+        }
+
+        if (/^(https?:|mailto:|tel:)/i.test(rawHref)) {
+          if (typeof openUrl === "function") {
+            await openUrl(rawHref);
+          }
+          return;
+        }
+
+        if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(rawHref)) {
+          if (typeof openUrl === "function") {
+            await openUrl(rawHref);
+          }
+          return;
+        }
+
+        const pane = anchor.closest(".preview-pane[data-preview-path]");
+        const markdownPath = String(pane?.dataset?.previewPath || "");
+        const baseDir = dirnameFsPath(markdownPath);
+        const {pathPart} = splitPathAndSuffix(rawHref);
+        if (!pathPart) return;
+
+        if (rawHref.startsWith("file://")) {
+          const localPath = fileUriToPath(rawHref);
+          if (localPath && typeof openPath === "function") {
+            await openPath(localPath);
+          }
+          return;
+        }
+
+        const absolutePath = resolveFsPath(baseDir, pathPart);
+        if (absolutePath && typeof openPath === "function") {
+          await openPath(absolutePath);
+        }
+      };
       const guessMimeType = (name, isDir) => {
         if (isDir) return "inode/directory";
         const ext = (name.split(".").pop() || "").toLowerCase();
@@ -2169,6 +2425,8 @@
         if (["pdf"].includes(ext)) return "application/pdf";
         return "application/octet-stream";
       };
+      rewriteMarkdownPreviewImages(root);
+      rewriteMarkdownPreviewLinks(root);
       const clampName = (name) => {
         const limit = 34;
         if (!name || name.length <= limit) return name || "item";
@@ -2677,6 +2935,8 @@
         }
       };
       const initSearchPreviewMedia = () => {
+        rewriteMarkdownPreviewImages(searchPreview);
+        rewriteMarkdownPreviewLinks(searchPreview);
         if (!searchPreview || typeof invoke !== "function") return;
         const pdfIframe = searchPreview.querySelector(".preview-pdf[data-pdf-path]");
         if (pdfIframe) {
@@ -3638,6 +3898,15 @@
       root.addEventListener(
         "click",
         (event) => {
+          const markdownLink = event.target.closest(".preview-markdown a[href]");
+          if (markdownLink && root.contains(markdownLink)) {
+            event.preventDefault();
+            event.stopPropagation();
+            openMarkdownLinkExternally(markdownLink).catch((error) => {
+              logNav("markdown link open failed", {href: markdownLink.getAttribute("href"), error: String(error)});
+            });
+            return;
+          }
           const row = mainRowFromEvent(event);
           if (!row) return;
           if (dragInProgress) return;
