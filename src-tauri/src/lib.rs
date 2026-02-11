@@ -238,6 +238,26 @@ pub fn run() {
                 }
                 return;
             }
+            if menu_id == "ctx_open_default" {
+                let _ = file_controller::open_in_default(first_path.clone());
+                return;
+            }
+            if menu_id == "ctx_open_zed" {
+                let _ = file_controller::open_in_zed(first_path.clone());
+                return;
+            }
+            if menu_id == "ctx_open_warp" {
+                let _ = file_controller::open_in_warp(first_path.clone());
+                return;
+            }
+            if menu_id == "ctx_open_finder" {
+                let _ = file_controller::open_in_finder(first_path.clone());
+                return;
+            }
+            if menu_id == "ctx_open_github_desktop" {
+                let _ = file_controller::open_in_github_desktop_from_app(app, first_path.clone());
+                return;
+            }
 
             if menu_id == "ctx_rename"
                 || menu_id == "ctx_trash"

@@ -2999,21 +2999,34 @@ pub fn open_in_github_desktop(
     path: String,
     tabs_state: State<'_, FileTabsState>,
 ) -> Result<(), String> {
+    let tab_root = active_tab_root_for_state(&tabs_state)?;
+    open_in_github_desktop_with_tab_root(path, tab_root)
+}
+
+pub fn open_in_github_desktop_from_app(app: &AppHandle, path: String) -> Result<(), String> {
+    let tabs_state = app.state::<FileTabsState>();
+    let tab_root = active_tab_root_for_state(&tabs_state)?;
+    open_in_github_desktop_with_tab_root(path, tab_root)
+}
+
+fn active_tab_root_for_state(tabs_state: &State<'_, FileTabsState>) -> Result<PathBuf, String> {
     let home = home_directory();
     let mut model = tabs_state
         .tabs
         .lock()
         .map_err(|_| "failed to lock tabs state".to_string())?;
     ensure_tabs(&mut model, &home);
-    let tab_root = model
+    Ok(model
         .tabs
         .iter()
         .find(|tab| tab.id == model.active_id)
         .or_else(|| model.tabs.first())
         .map(|tab| active_tab_root_path(tab, &home))
-        .unwrap_or_else(|| home.clone());
-    drop(model);
+        .unwrap_or_else(|| home.clone()))
+}
 
+fn open_in_github_desktop_with_tab_root(path: String, tab_root: PathBuf) -> Result<(), String> {
+    let home = home_directory();
     let target = resolve_home_scoped_path(&home, &path)?;
     if !target.is_dir() {
         return Err("github desktop can only open directories".to_string());
