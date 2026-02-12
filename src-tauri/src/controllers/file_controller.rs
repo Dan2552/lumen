@@ -1191,7 +1191,28 @@ fn load_zip_entry_preview(path: &Path, entry_name: &str) -> Result<ZipEntryPrevi
     })
 }
 
-fn should_show_default_open_for_file(path: &Path) -> bool {
+fn is_macos_application_bundle(path: &Path) -> bool {
+    if !cfg!(target_os = "macos") || !path.is_dir() {
+        return false;
+    }
+    let is_app_dir = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.eq_ignore_ascii_case("app"))
+        .unwrap_or(false);
+    if !is_app_dir {
+        return false;
+    }
+    path.join("Contents").join("Info.plist").is_file()
+}
+
+fn should_show_default_open_for_path(path: &Path, is_dir: bool) -> bool {
+    if is_macos_application_bundle(path) {
+        return true;
+    }
+    if is_dir {
+        return false;
+    }
     let ext = path
         .extension()
         .and_then(|value| value.to_str())
@@ -1746,6 +1767,17 @@ fn resolve_home_scoped_path(home: &Path, path: &str) -> Result<PathBuf, String> 
     }
     if !candidate.starts_with(home) {
         return Err("path is outside allowed root".to_string());
+    }
+    Ok(candidate)
+}
+
+fn resolve_absolute_existing_path(path: &str) -> Result<PathBuf, String> {
+    let candidate = PathBuf::from(path.trim());
+    if !candidate.is_absolute() {
+        return Err("path must be absolute".to_string());
+    }
+    if !candidate.exists() {
+        return Err("path does not exist".to_string());
     }
     Ok(candidate)
 }
@@ -2902,7 +2934,7 @@ pub fn show_file_context_menu(
 
     let path_buf = PathBuf::from(&path);
     let is_multi_selection = selection_count > 1;
-    let show_default_open = should_show_default_open_for_file(&path_buf);
+    let show_default_open = should_show_default_open_for_path(&path_buf, is_dir);
     let show_github_desktop =
         is_dir && resolve_github_desktop_repo_for_path(&path_buf, &root).is_some();
 
@@ -2954,7 +2986,11 @@ pub fn show_file_context_menu(
             .text("ctx_new_file", "Create file")
             .separator()
             .text("ctx_set_tab_root", "Set as current tab root")
-            .separator()
+            .separator();
+        if show_default_open {
+            builder = builder.text("ctx_open_default", "Open");
+        }
+        builder = builder
             .text("ctx_open_finder", "Open in Finder")
             .text("ctx_open_warp", "Open in Warp")
             .text("ctx_open_zed", "Open in Zed");
@@ -3506,8 +3542,7 @@ fn open_path_with_application(app_name: &str, path: &Path) -> Result<(), String>
 
 #[tauri::command]
 pub fn open_in_default(path: String) -> Result<(), String> {
-    let home = home_directory();
-    let target = resolve_home_scoped_path(&home, &path)?;
+    let target = resolve_absolute_existing_path(&path)?;
     let status = Command::new("open")
         .arg(&target)
         .status()
@@ -3796,11 +3831,11 @@ pub fn path_context_capabilities(
         .unwrap_or_else(|| home.clone());
     drop(store);
 
-    let target = resolve_home_scoped_path(&home, &path)?;
+    let target = resolve_absolute_existing_path(&path)?;
     let is_dir = target.is_dir();
     Ok(PathContextCapabilities {
         is_dir,
-        show_default_open: !is_dir && should_show_default_open_for_file(&target),
+        show_default_open: should_show_default_open_for_path(&target, is_dir),
         show_github_desktop: is_dir
             && resolve_github_desktop_repo_for_path(&target, &tab_root).is_some(),
     })

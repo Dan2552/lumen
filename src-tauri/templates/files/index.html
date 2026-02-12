@@ -3736,17 +3736,15 @@
             : isDir
               ? "Selected Directory"
               : "File";
-          if (!isDir) {
-            if (capabilities.show_default_open && !hasMultiSelection) {
-              fileItems.push({
-                label: "File: Open",
-                hint: "",
-                run: () => {
-                  closeCommandModal();
-                  runContextAction("open_default", currentPath);
-                },
-              });
-            }
+          if (capabilities.show_default_open && !hasMultiSelection) {
+            fileItems.push({
+              label: `${selectionPrefix}: Open`,
+              hint: "",
+              run: () => {
+                closeCommandModal();
+                runContextAction("open_default", currentPath);
+              },
+            });
           }
           if (selectedDirectoryPath) {
             pushDirectoryCommandSet(
