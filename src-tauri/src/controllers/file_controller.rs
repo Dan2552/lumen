@@ -1932,6 +1932,11 @@ fn persist_tabs_store(store: &TabsStore) {
     let Ok(json) = serde_json::to_vec_pretty(store) else {
         return;
     };
+    if let Ok(existing) = fs::read(&path) {
+        if existing == json {
+            return;
+        }
+    }
     let tmp_path = path.with_extension("json.tmp");
     let Ok(mut file) = fs::File::create(&tmp_path) else {
         return;
