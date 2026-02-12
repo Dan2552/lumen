@@ -2460,6 +2460,7 @@ fn render_view(model: &TabsModel) -> String {
     let active_root_path = active_tab
         .map(|tab| active_tab_root_path(tab, &home))
         .unwrap_or_else(|| home.clone());
+    let active_root_above_home = active_root_path != home && home.starts_with(&active_root_path);
     let active_focus_path = active_tab
         .and_then(|tab| tab.focus_path.clone())
         .map(PathBuf::from)
@@ -2500,6 +2501,7 @@ fn render_view(model: &TabsModel) -> String {
     context.insert("root_name", &label_from_path(&active_root_path));
     context.insert("home_path", &home.to_string_lossy().to_string());
     context.insert("root_path", &active_root_path.to_string_lossy().to_string());
+    context.insert("active_root_above_home", &active_root_above_home);
     context.insert("show_hidden", &active_show_hidden);
     context.insert("columns", &columns);
     context.insert("tabs", &tabs);

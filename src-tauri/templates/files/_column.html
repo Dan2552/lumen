@@ -1,6 +1,17 @@
 <section class="finder-column" data-column="{{ column_index }}" data-path="{{ column.path }}">
   <div class="column-header" data-path="{{ column.path }}" data-is-dir="true">
     <span class="column-title">{{ column.title }}</span>
+    {% if column.path != home_path or active_root_above_home %}
+    <button
+      class="column-root-button {% if column.path == root_path %}is-active{% endif %}"
+      type="button"
+      title="{% if column.path == root_path %}Reset tab root to home directory{% else %}Set as current tab root{% endif %}"
+      hx-get="command/set_tab_root"
+      hx-target="#main-root"
+      hx-swap="outerHTML"
+      hx-vals='{"path": {% if column.path == root_path %}{{ home_path | json_encode }}{% else %}{{ column.path | json_encode }}{% endif %} }'
+    >./</button>
+    {% endif %}
     <button
       class="column-sort-button"
       type="button"
