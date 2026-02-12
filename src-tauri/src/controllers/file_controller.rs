@@ -3,7 +3,7 @@ use flate2::read::GzDecoder;
 use pulldown_cmark::{html, CowStr, Event, Options, Parser, Tag};
 use serde::Serialize;
 use std::{
-    collections::{hash_map::DefaultHasher, BTreeMap, BTreeSet, HashMap},
+    collections::{hash_map::DefaultHasher, BTreeMap, BTreeSet, HashMap, VecDeque},
     env, fs,
     hash::{Hash, Hasher},
     io::Read,
@@ -2069,11 +2069,11 @@ fn run_fuzzy_search_worker(
     const MAX_RESULTS: usize = 200;
     const FLUSH_EVERY: u64 = 40;
     let query_lower = query.to_ascii_lowercase();
-    let mut stack = vec![root.clone()];
+    let mut queue = VecDeque::from([root.clone()]);
     let mut scanned = 0u64;
     let mut ranked: Vec<(i64, SearchResultItem)> = Vec::new();
 
-    while let Some(directory) = stack.pop() {
+    while let Some(directory) = queue.pop_front() {
         let entries = match fs::read_dir(&directory) {
             Ok(entries) => entries,
             Err(_) => continue,
@@ -2091,7 +2091,7 @@ fn run_fuzzy_search_worker(
             };
             let is_dir = metadata.is_dir();
             if is_dir {
-                stack.push(path.clone());
+                queue.push_back(path.clone());
             }
             let relative = path
                 .strip_prefix(&root)
