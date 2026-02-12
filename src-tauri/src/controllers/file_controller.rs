@@ -2593,6 +2593,25 @@ pub fn new_tab(window: Window, state: State<'_, FileTabsState>, _path: String) -
     rendered
 }
 
+fn close_tab_in_model(model: &mut TabsModel, tab_id: u64) {
+    let Some(index) = model.tabs.iter().position(|tab| tab.id == tab_id) else {
+        return;
+    };
+    if model.tabs.len() == 1 {
+        model.tabs[0].root_path = None;
+        model.tabs[0].focus_path = None;
+        model.active_id = model.tabs[0].id;
+        return;
+    }
+    model.tabs.remove(index);
+    if model.active_id == tab_id {
+        let new_index = if index == 0 { 0 } else { index - 1 };
+        model.active_id = model.tabs[new_index].id;
+    } else if !model.tabs.iter().any(|tab| tab.id == model.active_id) {
+        model.active_id = model.tabs[0].id;
+    }
+}
+
 #[tauri::command]
 pub fn close_tab(window: Window, state: State<'_, FileTabsState>, tab_id: String) -> String {
     let home = home_directory();
@@ -2604,27 +2623,43 @@ pub fn close_tab(window: Window, state: State<'_, FileTabsState>, tab_id: String
     let rendered = {
         let model = ensure_window_tabs_model(&mut store, &window_label, &home);
         if let Ok(parsed_id) = tab_id.parse::<u64>() {
-            if let Some(index) = model.tabs.iter().position(|tab| tab.id == parsed_id) {
-                if model.tabs.len() == 1 {
-                    model.tabs[0].root_path = None;
-                    model.tabs[0].focus_path = None;
-                    model.active_id = model.tabs[0].id;
-                } else {
-                    model.tabs.remove(index);
-                    if model.active_id == parsed_id {
-                        let new_index = if index == 0 { 0 } else { index - 1 };
-                        model.active_id = model.tabs[new_index].id;
-                    } else if !model.tabs.iter().any(|tab| tab.id == model.active_id) {
-                        model.active_id = model.tabs[0].id;
-                    }
-                }
-            }
+            close_tab_in_model(model, parsed_id);
         }
         render_view(model)
     };
 
     persist_tabs_store(&store);
     rendered
+}
+
+#[tauri::command]
+pub fn close_tab_or_window(
+    window: Window,
+    state: State<'_, FileTabsState>,
+) -> Result<String, String> {
+    let home = home_directory();
+    let window_label = window.label().to_string();
+    let mut store = state
+        .tabs
+        .lock()
+        .map_err(|_| "failed to lock tabs state".to_string())?;
+    let should_close_window = {
+        let model = ensure_window_tabs_model(&mut store, &window_label, &home);
+        model.tabs.len() <= 1
+    };
+    if should_close_window {
+        drop(store);
+        window.close().map_err(|error| error.to_string())?;
+        return Ok(String::new());
+    }
+    let rendered = {
+        let model = ensure_window_tabs_model(&mut store, &window_label, &home);
+        let active_id = model.active_id;
+        close_tab_in_model(model, active_id);
+        render_view(model)
+    };
+    persist_tabs_store(&store);
+    Ok(rendered)
 }
 
 #[tauri::command]

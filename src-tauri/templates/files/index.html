@@ -2716,6 +2716,29 @@
           logNav("new_window failed", {error: String(error)});
         }
       };
+      const closeTabOrWindow = async () => {
+        if (typeof invoke !== "function") {
+          if (activeTabId && activeTabId !== "default") {
+            htmxCommandSwap("close_tab", {tabId: activeTabId});
+          }
+          return;
+        }
+        try {
+          const html = await invoke("close_tab_or_window");
+          if (typeof html === "string" && html.length > 0) {
+            if (window.htmx?.swap) {
+              window.htmx.swap(root, html, {swapStyle: "outerHTML"});
+            } else {
+              root.outerHTML = html;
+            }
+          }
+        } catch (error) {
+          logNav("close_tab_or_window failed", {error: String(error)});
+          if (activeTabId && activeTabId !== "default") {
+            htmxCommandSwap("close_tab", {tabId: activeTabId});
+          }
+        }
+      };
       const isSearchOpen = () => !!searchRoot && !searchRoot.hidden;
       const isGotoOpen = () => !!gotoModal && !gotoModal.hidden;
       const isCommandOpen = () => !!commandModal && !commandModal.hidden;
@@ -4358,12 +4381,10 @@
           }
           return;
         }
-        if (event.metaKey && lowered === "w") {
+        if ((event.metaKey || event.ctrlKey) && lowered === "w") {
           event.preventDefault();
           event.stopPropagation();
-          if (activeTabId && activeTabId !== "default") {
-            htmxCommandSwap("close_tab", {tabId: activeTabId});
-          }
+          closeTabOrWindow();
           return;
         }
         if ((event.metaKey || event.ctrlKey) && lowered === "p") {
