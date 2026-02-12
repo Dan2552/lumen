@@ -4710,6 +4710,34 @@
           }
           return;
         }
+        if (
+          event.key === "." &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.altKey &&
+          !event.shiftKey
+        ) {
+          const activeTag = document.activeElement?.tagName || "";
+          if (
+            activeTag !== "INPUT" &&
+            activeTag !== "TEXTAREA" &&
+            activeTag !== "SELECT" &&
+            !document.activeElement?.isContentEditable
+          ) {
+            const current = focusedRow();
+            const columnIndex = Number(current?.dataset?.column ?? NaN);
+            const columnPath =
+              columns.find((column) => Number(column.dataset.column || 0) === columnIndex)?.dataset.path ||
+              current?.closest(".finder-column")?.dataset?.path ||
+              currentDirectoryTitle();
+            if (columnPath) {
+              event.preventDefault();
+              event.stopPropagation();
+              htmxCommandSwap("set_tab_root", {path: columnPath === rootPath ? homePath : columnPath});
+              return;
+            }
+          }
+        }
         if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
 
         const activeTag = document.activeElement?.tagName || "";
