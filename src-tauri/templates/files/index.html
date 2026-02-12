@@ -1846,7 +1846,7 @@
       let commandModalIgnoreInteractionsUntil = 0;
       let gotoSuggestDebounceTimer = null;
       let gotoSuggestGeneration = 0;
-      let gotoSuggestionIndex = 0;
+      let gotoSuggestionIndex = -1;
       const commandCapabilitiesByPath = new Map();
       const searchPreviewObjectUrls = [];
       let lastSearchResultsHtml = "";
@@ -3362,15 +3362,15 @@
       const applyGoToSuggestionSelection = () => {
         const items = getGoToSuggestionItems();
         if (items.length === 0) {
-          gotoSuggestionIndex = 0;
+          gotoSuggestionIndex = -1;
           return;
         }
-        if (gotoSuggestionIndex < 0) gotoSuggestionIndex = 0;
-        if (gotoSuggestionIndex >= items.length) gotoSuggestionIndex = items.length - 1;
         for (let index = 0; index < items.length; index += 1) {
           items[index].classList.toggle("is-active", index === gotoSuggestionIndex);
         }
-        items[gotoSuggestionIndex]?.scrollIntoView({block: "nearest"});
+        if (gotoSuggestionIndex >= 0) {
+          items[gotoSuggestionIndex]?.scrollIntoView({block: "nearest"});
+        }
       };
       const clearGoToSuggestions = () => {
         if (gotoSuggestDebounceTimer) {
@@ -3378,7 +3378,7 @@
           gotoSuggestDebounceTimer = null;
         }
         gotoSuggestGeneration += 1;
-        gotoSuggestionIndex = 0;
+        gotoSuggestionIndex = -1;
         if (gotoSuggestions) {
           gotoSuggestions.hidden = true;
           gotoSuggestions.innerHTML = "";
@@ -3397,7 +3397,7 @@
           : [];
         if (normalized.length === 0) {
           gotoSuggestions.hidden = true;
-          gotoSuggestionIndex = 0;
+          gotoSuggestionIndex = -1;
           return;
         }
         const fragment = document.createDocumentFragment();
@@ -3411,7 +3411,7 @@
         }
         gotoSuggestions.appendChild(fragment);
         gotoSuggestions.hidden = false;
-        gotoSuggestionIndex = 0;
+        gotoSuggestionIndex = -1;
         applyGoToSuggestionSelection();
       };
       const requestGoToSuggestions = ({immediate = false} = {}) => {
@@ -3442,7 +3442,11 @@
       const moveGoToSuggestionSelection = (delta) => {
         const items = getGoToSuggestionItems();
         if (items.length === 0) return false;
-        gotoSuggestionIndex = Math.max(0, Math.min(gotoSuggestionIndex + delta, items.length - 1));
+        if (gotoSuggestionIndex < 0) {
+          gotoSuggestionIndex = delta >= 0 ? 0 : items.length - 1;
+        } else {
+          gotoSuggestionIndex = Math.max(0, Math.min(gotoSuggestionIndex + delta, items.length - 1));
+        }
         applyGoToSuggestionSelection();
         return true;
       };
@@ -3450,7 +3454,8 @@
         if (!gotoInput) return false;
         const items = getGoToSuggestionItems();
         if (items.length === 0) return false;
-        const active = items[gotoSuggestionIndex] || items[0];
+        if (gotoSuggestionIndex < 0) return false;
+        const active = items[gotoSuggestionIndex] || null;
         const value = String(active?.dataset?.value || "");
         if (!value) return false;
         gotoInput.value = value;
@@ -3988,7 +3993,7 @@
             event.preventDefault();
             event.stopPropagation();
             const items = getGoToSuggestionItems();
-            const active = items[gotoSuggestionIndex] || items[0] || null;
+            const active = gotoSuggestionIndex >= 0 ? (items[gotoSuggestionIndex] || null) : null;
             const suggestedValue = String(active?.dataset?.value || "");
             if (suggestedValue) {
               gotoInput.value = suggestedValue;
