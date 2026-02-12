@@ -718,6 +718,40 @@
       outline: none;
     }
 
+    .goto-modal-suggestions {
+      margin-top: 6px;
+      border: 1px solid #3f4960;
+      border-radius: 7px;
+      background: rgba(21, 26, 36, 0.92);
+      max-height: 190px;
+      overflow-y: auto;
+      padding: 4px;
+    }
+
+    .goto-modal-suggestions[hidden] {
+      display: none !important;
+    }
+
+    .goto-suggestion-item {
+      width: 100%;
+      min-height: 30px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      background: transparent;
+      color: #d8e0ee;
+      font: inherit;
+      font-size: 12px;
+      text-align: left;
+      padding: 0 8px;
+      cursor: default;
+    }
+
+    .goto-suggestion-item.is-active {
+      border-color: #2f86e9;
+      background: #1f5fbf;
+      color: #f2f6ff;
+    }
+
     .goto-modal-error {
       min-height: 18px;
       margin-top: 6px;
@@ -1155,6 +1189,7 @@
         autocapitalize="off"
         autocomplete="off"
       />
+      <div id="goto-modal-suggestions" class="goto-modal-suggestions" hidden></div>
       <div id="goto-modal-error" class="goto-modal-error"></div>
       <div class="goto-modal-actions">
         <button id="goto-modal-cancel" class="goto-modal-button" type="button">Cancel</button>
@@ -1761,6 +1796,7 @@
       const searchInlineStatus = root.querySelector("#files-search-inline-status");
       const gotoModal = root.querySelector("#goto-modal");
       const gotoInput = root.querySelector("#goto-modal-input");
+      const gotoSuggestions = root.querySelector("#goto-modal-suggestions");
       const gotoError = root.querySelector("#goto-modal-error");
       const gotoCancel = root.querySelector("#goto-modal-cancel");
       const gotoGo = root.querySelector("#goto-modal-go");
@@ -1788,6 +1824,9 @@
       let commandSelectionIndex = 0;
       let commandModalIgnoreBackdropUntil = 0;
       let commandModalIgnoreInteractionsUntil = 0;
+      let gotoSuggestDebounceTimer = null;
+      let gotoSuggestGeneration = 0;
+      let gotoSuggestionIndex = 0;
       const commandCapabilitiesByPath = new Map();
       const searchPreviewObjectUrls = [];
       let lastSearchResultsHtml = "";
@@ -3296,16 +3335,125 @@
         }
         setSearchStatus("");
       };
+      const getGoToSuggestionItems = () =>
+        gotoSuggestions
+          ? Array.from(gotoSuggestions.querySelectorAll(".goto-suggestion-item[data-value]"))
+          : [];
+      const applyGoToSuggestionSelection = () => {
+        const items = getGoToSuggestionItems();
+        if (items.length === 0) {
+          gotoSuggestionIndex = 0;
+          return;
+        }
+        if (gotoSuggestionIndex < 0) gotoSuggestionIndex = 0;
+        if (gotoSuggestionIndex >= items.length) gotoSuggestionIndex = items.length - 1;
+        for (let index = 0; index < items.length; index += 1) {
+          items[index].classList.toggle("is-active", index === gotoSuggestionIndex);
+        }
+        items[gotoSuggestionIndex]?.scrollIntoView({block: "nearest"});
+      };
+      const clearGoToSuggestions = () => {
+        if (gotoSuggestDebounceTimer) {
+          clearTimeout(gotoSuggestDebounceTimer);
+          gotoSuggestDebounceTimer = null;
+        }
+        gotoSuggestGeneration += 1;
+        gotoSuggestionIndex = 0;
+        if (gotoSuggestions) {
+          gotoSuggestions.hidden = true;
+          gotoSuggestions.innerHTML = "";
+        }
+      };
+      const renderGoToSuggestions = (items) => {
+        if (!gotoSuggestions) return;
+        gotoSuggestions.innerHTML = "";
+        const normalized = Array.isArray(items)
+          ? items
+              .map((item) => ({
+                name: String(item?.name || ""),
+                value: String(item?.value || ""),
+              }))
+              .filter((item) => item.name.length > 0 && item.value.length > 0)
+          : [];
+        if (normalized.length === 0) {
+          gotoSuggestions.hidden = true;
+          gotoSuggestionIndex = 0;
+          return;
+        }
+        const fragment = document.createDocumentFragment();
+        for (const item of normalized) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "goto-suggestion-item";
+          button.dataset.value = item.value;
+          button.textContent = item.name;
+          fragment.appendChild(button);
+        }
+        gotoSuggestions.appendChild(fragment);
+        gotoSuggestions.hidden = false;
+        gotoSuggestionIndex = 0;
+        applyGoToSuggestionSelection();
+      };
+      const requestGoToSuggestions = ({immediate = false} = {}) => {
+        if (!gotoInput || typeof invoke !== "function") return;
+        if (gotoSuggestDebounceTimer) {
+          clearTimeout(gotoSuggestDebounceTimer);
+          gotoSuggestDebounceTimer = null;
+        }
+        const run = () => {
+          if (!isGotoOpen()) return;
+          const generation = ++gotoSuggestGeneration;
+          invoke("goto_directory_suggestions", {path: String(gotoInput.value || "")})
+            .then((items) => {
+              if (generation !== gotoSuggestGeneration || !isGotoOpen()) return;
+              renderGoToSuggestions(items);
+            })
+            .catch(() => {
+              if (generation !== gotoSuggestGeneration || !isGotoOpen()) return;
+              renderGoToSuggestions([]);
+            });
+        };
+        if (immediate) {
+          run();
+          return;
+        }
+        gotoSuggestDebounceTimer = setTimeout(run, 65);
+      };
+      const moveGoToSuggestionSelection = (delta) => {
+        const items = getGoToSuggestionItems();
+        if (items.length === 0) return false;
+        gotoSuggestionIndex = Math.max(0, Math.min(gotoSuggestionIndex + delta, items.length - 1));
+        applyGoToSuggestionSelection();
+        return true;
+      };
+      const completeGoToSuggestion = () => {
+        if (!gotoInput) return false;
+        const items = getGoToSuggestionItems();
+        if (items.length === 0) return false;
+        const active = items[gotoSuggestionIndex] || items[0];
+        const value = String(active?.dataset?.value || "");
+        if (!value) return false;
+        gotoInput.value = value;
+        if (gotoError) gotoError.textContent = "";
+        gotoInput.focus({preventScroll: true});
+        if (typeof gotoInput.setSelectionRange === "function") {
+          gotoInput.setSelectionRange(value.length, value.length);
+        }
+        requestGoToSuggestions({immediate: true});
+        return true;
+      };
       const closeGoToModal = () => {
         if (!gotoModal) return;
         gotoModal.hidden = true;
         if (gotoError) gotoError.textContent = "";
+        clearGoToSuggestions();
       };
       const openGoToModal = () => {
         if (!gotoModal || !gotoInput) return;
         gotoModal.hidden = false;
         if (gotoError) gotoError.textContent = "";
         gotoInput.value = getFocusPath() || "";
+        requestGoToSuggestions({immediate: true});
         setTimeout(() => {
           gotoInput.focus();
           gotoInput.select();
@@ -3315,7 +3463,7 @@
         if (!gotoInput || typeof invoke !== "function") return;
         const value = String(gotoInput.value || "").trim();
         if (!value) {
-          if (gotoError) gotoError.textContent = "Enter an absolute path.";
+          if (gotoError) gotoError.textContent = "Enter a path.";
           gotoInput.focus();
           return;
         }
@@ -3498,7 +3646,7 @@
 
         tabItems.push({
           label: "Tab: Go to location",
-          hint: "Cmd+G",
+          hint: "Cmd+G or /",
           run: () => {
             closeCommandModal();
             openGoToModal();
@@ -3784,6 +3932,7 @@
       if (gotoInput) {
         gotoInput.addEventListener("input", () => {
           if (gotoError) gotoError.textContent = "";
+          requestGoToSuggestions();
         });
         gotoInput.addEventListener("keydown", (event) => {
           if (event.key === "Escape") {
@@ -3792,11 +3941,67 @@
             closeGoToModal();
             return;
           }
+          if (event.key === "ArrowDown") {
+            if (!moveGoToSuggestionSelection(1)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+          if (event.key === "ArrowUp") {
+            if (!moveGoToSuggestionSelection(-1)) return;
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+          if (
+            event.key === "ArrowRight" &&
+            !event.metaKey &&
+            !event.ctrlKey &&
+            !event.altKey
+          ) {
+            if (!completeGoToSuggestion()) return;
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
           if (event.key === "Enter") {
             event.preventDefault();
             event.stopPropagation();
+            const items = getGoToSuggestionItems();
+            const active = items[gotoSuggestionIndex] || items[0] || null;
+            const suggestedValue = String(active?.dataset?.value || "");
+            if (suggestedValue) {
+              gotoInput.value = suggestedValue;
+            }
             submitGoToModal();
           }
+        });
+      }
+      if (gotoSuggestions && gotoInput) {
+        gotoSuggestions.addEventListener("mousedown", (event) => {
+          event.preventDefault();
+        });
+        gotoSuggestions.addEventListener("mousemove", (event) => {
+          const item = event.target.closest(".goto-suggestion-item[data-value]");
+          if (!item) return;
+          const items = getGoToSuggestionItems();
+          const index = items.findIndex((candidate) => candidate === item);
+          if (index < 0 || index === gotoSuggestionIndex) return;
+          gotoSuggestionIndex = index;
+          applyGoToSuggestionSelection();
+        });
+        gotoSuggestions.addEventListener("click", (event) => {
+          const item = event.target.closest(".goto-suggestion-item[data-value]");
+          if (!item) return;
+          const value = String(item.dataset.value || "");
+          if (!value) return;
+          gotoInput.value = value;
+          if (gotoError) gotoError.textContent = "";
+          gotoInput.focus({preventScroll: true});
+          if (typeof gotoInput.setSelectionRange === "function") {
+            gotoInput.setSelectionRange(value.length, value.length);
+          }
+          requestGoToSuggestions({immediate: true});
         });
       }
       if (gotoModal) {
@@ -4334,8 +4539,32 @@
         }
         if ((event.metaKey || event.ctrlKey) && lowered === "g") {
           event.preventDefault();
+          event.stopPropagation();
           openGoToModal();
           return;
+        }
+        if (
+          event.key === "/" &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.altKey &&
+          !event.shiftKey &&
+          !isCommandOpen() &&
+          !isSearchOpen() &&
+          !isGotoOpen()
+        ) {
+          const activeTag = document.activeElement?.tagName || "";
+          if (
+            activeTag !== "INPUT" &&
+            activeTag !== "TEXTAREA" &&
+            activeTag !== "SELECT" &&
+            !document.activeElement?.isContentEditable
+          ) {
+            event.preventDefault();
+            event.stopPropagation();
+            openGoToModal();
+            return;
+          }
         }
         if (isCommandOpen()) {
           if (commandInput && document.activeElement !== commandInput) {

@@ -100,6 +100,12 @@ pub struct PathContextCapabilities {
     show_github_desktop: bool,
 }
 
+#[derive(Debug, Serialize)]
+pub struct GoToDirectorySuggestion {
+    name: String,
+    value: String,
+}
+
 #[derive(Debug, Clone)]
 struct SearchModel {
     generation: u64,
@@ -1772,6 +1778,72 @@ fn resolve_location_input_path(home: &Path, path: &str) -> Result<PathBuf, Strin
     Ok(candidate)
 }
 
+fn split_location_parent_and_segment(input: &str) -> (String, String) {
+    if input.is_empty() {
+        return (String::new(), String::new());
+    }
+    if input.ends_with('/') {
+        return (input.trim_end_matches('/').to_string(), String::new());
+    }
+    if let Some(index) = input.rfind('/') {
+        return (input[..index].to_string(), input[index + 1..].to_string());
+    }
+    (String::new(), input.to_string())
+}
+
+fn location_suggestion_context(home: &Path, input: &str) -> (PathBuf, String, String) {
+    let trimmed = input.trim();
+    if trimmed.is_empty() || trimmed == "~" {
+        return (home.to_path_buf(), "~/".to_string(), String::new());
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("~/") {
+        let (parent_rel, segment) = split_location_parent_and_segment(rest);
+        let parent_dir = if parent_rel.is_empty() {
+            home.to_path_buf()
+        } else {
+            home.join(&parent_rel)
+        };
+        let parent_input = if parent_rel.is_empty() {
+            "~/".to_string()
+        } else {
+            format!("~/{parent_rel}/")
+        };
+        return (parent_dir, parent_input, segment);
+    }
+
+    if trimmed.starts_with('/') {
+        if trimmed == "/" {
+            return (PathBuf::from("/"), "/".to_string(), String::new());
+        }
+        let (parent_raw, segment) = split_location_parent_and_segment(trimmed);
+        let parent_path = if parent_raw.is_empty() {
+            "/".to_string()
+        } else {
+            parent_raw
+        };
+        let parent_input = if parent_path == "/" {
+            "/".to_string()
+        } else {
+            format!("{parent_path}/")
+        };
+        return (PathBuf::from(parent_path), parent_input, segment);
+    }
+
+    let (parent_rel, segment) = split_location_parent_and_segment(trimmed);
+    let parent_dir = if parent_rel.is_empty() {
+        home.to_path_buf()
+    } else {
+        home.join(&parent_rel)
+    };
+    let parent_input = if parent_rel.is_empty() {
+        String::new()
+    } else {
+        format!("{parent_rel}/")
+    };
+    (parent_dir, parent_input, segment)
+}
+
 fn validate_rename_name(new_name: &str) -> Result<String, String> {
     let trimmed = new_name.trim();
     if trimmed.is_empty() {
@@ -2504,6 +2576,61 @@ pub fn validate_location_path(path: String) -> Result<String, String> {
     let home = home_directory();
     let target = resolve_location_input_path(&home, &path)?;
     Ok(target.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub fn goto_directory_suggestions(path: String) -> Vec<GoToDirectorySuggestion> {
+    const MAX_RESULTS: usize = 24;
+
+    let home = home_directory();
+    let (parent_dir, parent_input, segment) = location_suggestion_context(&home, &path);
+    if !parent_dir.is_dir() {
+        return Vec::new();
+    }
+
+    let segment_lower = segment.to_ascii_lowercase();
+    let show_hidden = segment.starts_with('.');
+    let mut ranked: Vec<(i64, String)> = Vec::new();
+    let Ok(entries) = fs::read_dir(parent_dir) else {
+        return Vec::new();
+    };
+
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.is_empty() {
+            continue;
+        }
+        if !show_hidden && name.starts_with('.') {
+            continue;
+        }
+
+        let name_lower = name.to_ascii_lowercase();
+        let mut score = match fuzzy_score(&name_lower, &segment_lower) {
+            Some(value) => value,
+            None => continue,
+        };
+        if !segment_lower.is_empty() && name_lower.starts_with(&segment_lower) {
+            score += 200;
+        }
+        ranked.push((score, name));
+    }
+
+    ranked.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    ranked.truncate(MAX_RESULTS);
+    ranked
+        .into_iter()
+        .map(|(_, name)| GoToDirectorySuggestion {
+            value: format!("{parent_input}{name}/"),
+            name,
+        })
+        .collect()
 }
 
 #[tauri::command]
