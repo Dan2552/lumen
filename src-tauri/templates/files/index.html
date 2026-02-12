@@ -3445,7 +3445,7 @@
         });
         tabItems.push({
           label: "Window: New window",
-          hint: "Cmd+Shift+N",
+          hint: "Cmd+N",
           run: () => {
             closeCommandModal();
             openNewWindow();
@@ -4253,13 +4253,13 @@
           }
           return;
         }
-        if ((event.metaKey || event.ctrlKey) && event.shiftKey && lowered === "n") {
+        if ((event.metaKey || event.ctrlKey) && lowered === "n") {
           event.preventDefault();
           event.stopPropagation();
           openNewWindow();
           return;
         }
-        if ((event.metaKey || event.ctrlKey) && !event.shiftKey && lowered === "n") {
+        if ((event.metaKey || event.ctrlKey) && lowered === "t") {
           event.preventDefault();
           event.stopPropagation();
           htmxCommandSwap("new_tab", {path: getFocusPath() || ""});
@@ -4366,7 +4366,7 @@
           }
           return;
         }
-        if ((event.metaKey || event.ctrlKey) && (lowered === "p" || lowered === "t")) {
+        if ((event.metaKey || event.ctrlKey) && lowered === "p") {
           event.preventDefault();
           openSearchPalette();
           return;
