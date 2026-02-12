@@ -4733,7 +4733,9 @@
             if (columnPath) {
               event.preventDefault();
               event.stopPropagation();
-              htmxCommandSwap("set_tab_root", {path: columnPath === rootPath ? homePath : columnPath});
+              const rootIsUnderHome = rootPath === homePath || rootPath.startsWith(`${homePath}/`);
+              const toggledRootPath = rootPath === "/" || rootIsUnderHome ? homePath : "/";
+              htmxCommandSwap("set_tab_root", {path: columnPath === rootPath ? toggledRootPath : columnPath});
               return;
             }
           }

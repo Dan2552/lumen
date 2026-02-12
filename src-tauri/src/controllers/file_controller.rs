@@ -2466,6 +2466,7 @@ fn render_view(model: &TabsModel) -> String {
         .map(|tab| active_tab_root_path(tab, &home))
         .unwrap_or_else(|| home.clone());
     let active_root_above_home = active_root_path != home && home.starts_with(&active_root_path);
+    let active_root_under_home = active_root_path.starts_with(&home);
     let active_focus_path = active_tab
         .and_then(|tab| tab.focus_path.clone())
         .map(PathBuf::from)
@@ -2507,6 +2508,7 @@ fn render_view(model: &TabsModel) -> String {
     context.insert("home_path", &home.to_string_lossy().to_string());
     context.insert("root_path", &active_root_path.to_string_lossy().to_string());
     context.insert("active_root_above_home", &active_root_above_home);
+    context.insert("active_root_under_home", &active_root_under_home);
     context.insert("show_hidden", &active_show_hidden);
     context.insert("columns", &columns);
     context.insert("tabs", &tabs);
@@ -3745,7 +3747,10 @@ pub fn set_tab_root(
         .lock()
         .map_err(|_| "failed to lock tabs state".to_string())?;
 
-    let target = resolve_home_scoped_path(&home, &path)?;
+    let target = PathBuf::from(path.trim());
+    if !target.is_absolute() {
+        return Err("path must be absolute".to_string());
+    }
     if !target.is_dir() {
         return Err("tab root must be a directory".to_string());
     }

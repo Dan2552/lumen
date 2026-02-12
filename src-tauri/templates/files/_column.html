@@ -5,11 +5,11 @@
     <button
       class="column-root-button {% if column.path == root_path %}is-active{% endif %}"
       type="button"
-      title="{% if column.path == root_path %}Reset tab root to home directory{% else %}Set as current tab root{% endif %}"
+      title="{% if column.path == root_path %}Reset tab root{% else %}Set as current tab root{% endif %}"
       hx-get="command/set_tab_root"
       hx-target="#main-root"
       hx-swap="outerHTML"
-      hx-vals='{"path": {% if column.path == root_path %}{{ home_path | json_encode }}{% else %}{{ column.path | json_encode }}{% endif %} }'
+      hx-vals='{"path": {% if column.path == root_path %}{% if root_path == "/" or active_root_under_home %}{{ home_path | json_encode }}{% else %}"/"{% endif %}{% else %}{{ column.path | json_encode }}{% endif %} }'
     >./</button>
     {% endif %}
     <button
