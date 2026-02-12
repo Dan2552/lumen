@@ -2426,6 +2426,7 @@ fn render_view(model: &TabsModel) -> String {
         .collect();
 
     context.insert("root_name", &label_from_path(&active_root_path));
+    context.insert("home_path", &home.to_string_lossy().to_string());
     context.insert("root_path", &active_root_path.to_string_lossy().to_string());
     context.insert("show_hidden", &active_show_hidden);
     context.insert("columns", &columns);

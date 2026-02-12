@@ -2,6 +2,7 @@
   id="main-root"
   class="files-root"
   data-active-tab-id="{{ active_tab_id }}"
+  data-home-path="{{ home_path }}"
   data-root-path="{{ root_path }}"
   data-show-hidden="{% if show_hidden %}true{% else %}false{% endif %}"
 >
@@ -1661,8 +1662,37 @@
         return state;
       };
       const activeTabId = root.dataset.activeTabId || "default";
+      const homePath = root.dataset.homePath || "";
       const rootPath = root.dataset.rootPath || "";
       const showHidden = (root.dataset.showHidden || "").toLowerCase() === "true";
+      const getCurrentWindowHandle = window.__TAURI__?.window?.getCurrentWindow;
+      let lastAppliedWindowTitle = "";
+      const displayWindowPath = (rawPath) => {
+        const value = String(rawPath || "").trim() || "/";
+        if (!homePath || homePath === "/") return value;
+        if (value === homePath) return "~/";
+        const prefix = `${homePath}/`;
+        if (value.startsWith(prefix)) {
+          return `~/${value.slice(prefix.length)}`;
+        }
+        return value;
+      };
+      const applyWindowTitle = (value) => {
+        const title = displayWindowPath(value || rootPath || "/");
+        if (!title || title === lastAppliedWindowTitle) return;
+        lastAppliedWindowTitle = title;
+        document.title = title;
+        if (typeof getCurrentWindowHandle === "function") {
+          const currentWindow = getCurrentWindowHandle();
+          if (currentWindow && typeof currentWindow.setTitle === "function") {
+            Promise.resolve(currentWindow.setTitle(title)).catch(() => {
+              document.title = title;
+            });
+            return;
+          }
+        }
+      };
+      applyWindowTitle(rootPath);
       const DEBUG_NAV = true;
       const DEBUG_SCROLL = true;
       const logNav = (...args) => {
@@ -1684,6 +1714,10 @@
       if (rows.length === 0) return;
       let dragInProgress = false;
       const columns = Array.from(root.querySelectorAll(".finder-layout > .finder-column"));
+      const currentDirectoryTitle = () => {
+        const activeColumn = columns.find((column) => column.classList.contains("is-active")) || columns.at(-1);
+        return activeColumn?.dataset?.path || rootPath || "/";
+      };
       const isMainRow = (row) => !!row && rows.includes(row);
       const isMainColumn = (column) => !!column && columns.includes(column);
       const mainRowFromEvent = (event) => {
@@ -1874,6 +1908,7 @@
         for (const column of columns) {
           column.classList.toggle("is-active", Number(column.dataset.column) === columnIndex);
         }
+        applyWindowTitle(currentDirectoryTitle());
       };
       const ensureColumnAndNextVisible = (columnIndex) => {
         if (!layout) return;
