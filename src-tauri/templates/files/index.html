@@ -1915,12 +1915,15 @@
         const currentColumn = columns.find((column) => Number(column.dataset.column || 0) === columnIndex);
         if (!currentColumn) return;
         const nextColumn = columns.find((column) => Number(column.dataset.column || 0) === columnIndex + 1);
-        const targetColumn = nextColumn || previewPane || currentColumn;
+        const preferredTargetColumn = nextColumn || previewPane || currentColumn;
         const currentLeft = currentColumn.offsetLeft;
+        const margin = 8;
+        const preferredTargetRight = preferredTargetColumn.offsetLeft + preferredTargetColumn.offsetWidth;
+        const requiredWidthToShowBoth = preferredTargetRight - currentLeft + margin * 2;
+        const canShowCurrentAndTarget = layout.clientWidth >= requiredWidthToShowBoth;
+        const targetColumn = canShowCurrentAndTarget ? preferredTargetColumn : currentColumn;
         const targetRight = targetColumn.offsetLeft + targetColumn.offsetWidth;
         const viewportLeft = layout.scrollLeft;
-        const viewportRight = viewportLeft + layout.clientWidth;
-        const margin = 8;
         let desiredLeft = viewportLeft;
 
         if (currentLeft < viewportLeft + margin) {
