@@ -16,8 +16,8 @@ use std::{
     time::UNIX_EPOCH,
 };
 use tauri::{
-    menu::MenuBuilder, AppHandle, LogicalPosition, Manager, PhysicalPosition, PhysicalSize,
-    Runtime, State, WebviewUrl, WebviewWindowBuilder, Window,
+    menu::MenuBuilder, AppHandle, LogicalPosition, Manager, Runtime, State, WebviewUrl,
+    WebviewWindowBuilder, Window,
 };
 use tera::Context;
 use zip::ZipArchive;
@@ -2323,8 +2323,9 @@ fn ensure_tabs(model: &mut TabsModel, home: &Path) {
     }
 }
 
-pub fn restore_main_window_state<R: Runtime>(app: &AppHandle<R>) {
-    restore_window_state(app, "main");
+pub fn ensure_main_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), tauri::Error> {
+    let _ = ensure_browser_window(app, "main")?;
+    Ok(())
 }
 
 pub fn restore_saved_additional_windows<R: Runtime>(app: &AppHandle<R>) {
@@ -2343,16 +2344,6 @@ pub fn restore_saved_additional_windows<R: Runtime>(app: &AppHandle<R>) {
 
     for label in labels {
         let _ = ensure_browser_window(app, &label);
-    }
-}
-
-pub fn restore_window_state<R: Runtime>(app: &AppHandle<R>, window_label: &str) {
-    let Some(window) = app.get_webview_window(window_label) else {
-        return;
-    };
-    if let Some(geometry) = saved_geometry_for_label(app, window_label) {
-        let _ = window.set_size(PhysicalSize::new(geometry.width, geometry.height));
-        let _ = window.set_position(PhysicalPosition::new(geometry.x, geometry.y));
     }
 }
 
@@ -2453,15 +2444,23 @@ fn ensure_browser_window<R: Runtime>(
     if let Some(window) = app.get_webview_window(window_label) {
         return Ok(window);
     }
-    let window = WebviewWindowBuilder::new(app, window_label, WebviewUrl::App("index.html".into()))
+    let saved_geometry = saved_geometry_for_label(app, window_label);
+    let mut builder = WebviewWindowBuilder::new(app, window_label, WebviewUrl::App("index.html".into()))
         .title("Lumen")
-        .inner_size(800.0, 680.0)
-        .build()?;
-    if let Some(geometry) = saved_geometry_for_label(app, window_label) {
-        let _ = window.set_size(PhysicalSize::new(geometry.width, geometry.height));
-        let _ = window.set_position(PhysicalPosition::new(geometry.x, geometry.y));
+        .inner_size(800.0, 680.0);
+    if let Some(geometry) = saved_geometry {
+        builder = builder
+            .inner_size(geometry.width as f64, geometry.height as f64)
+            .position(geometry.x as f64, geometry.y as f64);
     }
-    Ok(window)
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .traffic_light_position(LogicalPosition::new(12.0, 22.0))
+            .hidden_title(true);
+    }
+    builder.build()
 }
 
 fn next_window_label<R: Runtime>(app: &AppHandle<R>) -> String {

@@ -169,7 +169,7 @@ pub fn run() {
         .manage(file_controller::FileSearchState::default())
         .manage(HoldState::default())
         .setup(|app| {
-            file_controller::restore_main_window_state(&app.handle());
+            file_controller::ensure_main_window(&app.handle())?;
             file_controller::restore_saved_additional_windows(&app.handle());
             let _ = ensure_hold_window(&app.handle());
             update_hold_window_visibility(&app.handle());

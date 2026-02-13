@@ -8,13 +8,7 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [
-      {
-        "title": "Lumen",
-        "width": 800,
-        "height": 680
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }

@@ -23,21 +23,44 @@
     }
 
     .tabs-bar {
+      --traffic-lights-slot: 70px;
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
       min-height: 36px;
       padding: 4px 8px;
       background: rgba(26, 31, 41, 0.95);
       border-bottom: 1px solid #3a4151;
-      overflow-x: auto;
       flex-shrink: 0;
+    }
+
+    .tabs-list {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      flex: 1 1 auto;
+      overflow-x: auto;
+    }
+
+    .tabs-left-gutter {
+      flex: 0 0 var(--traffic-lights-slot);
+      min-width: var(--traffic-lights-slot);
+      height: 28px;
+      border-radius: 7px;
+    }
+
+    .tabs-drag-gutter {
+      flex: 0 0 40px;
+      min-width: 40px;
+      height: 28px;
+      border-radius: 7px;
     }
 
     .tab-button {
       height: 28px;
-      min-width: 110px;
-      max-width: 220px;
+      min-width: 96px;
+      max-width: 180px;
       padding: 0 10px;
       border: 1px solid #4b5364;
       border-radius: 7px;
@@ -62,7 +85,7 @@
       background: #3a4254;
       overflow: hidden;
       flex-shrink: 0;
-      max-width: 260px;
+      max-width: 220px;
     }
 
     .tab-shell.sortable-chosen {
@@ -82,7 +105,7 @@
     .tab-shell .tab-button {
       border: none;
       background: transparent;
-      max-width: 228px;
+      max-width: 188px;
       border-radius: 0;
     }
 
@@ -1046,34 +1069,38 @@
   </style>
 
   <div class="tabs-bar">
-    {% for tab in tabs %}
-    <div class="tab-shell {% if tab.is_active %}is-active{% endif %}" data-tab-id="{{ tab.id }}">
-    <button
-      class="tab-button"
-      type="button"
-      hx-get="command/activate_tab"
-      hx-target="#main-root"
-      hx-swap="outerHTML"
-      hx-vals='{"tabId": {{ tab.id | json_encode }} }'
-    >{{ tab.title }}</button>
-    <button
-      class="tab-close"
-      type="button"
-      hx-get="command/close_tab"
-      hx-target="#main-root"
-      hx-swap="outerHTML"
-      hx-vals='{"tabId": {{ tab.id | json_encode }} }'
-    >x</button>
+    <div class="tabs-left-gutter" data-tauri-drag-region></div>
+    <div class="tabs-list">
+      {% for tab in tabs %}
+      <div class="tab-shell {% if tab.is_active %}is-active{% endif %}" data-tab-id="{{ tab.id }}">
+      <button
+        class="tab-button"
+        type="button"
+        hx-get="command/activate_tab"
+        hx-target="#main-root"
+        hx-swap="outerHTML"
+        hx-vals='{"tabId": {{ tab.id | json_encode }} }'
+      >{{ tab.title }}</button>
+      <button
+        class="tab-close"
+        type="button"
+        hx-get="command/close_tab"
+        hx-target="#main-root"
+        hx-swap="outerHTML"
+        hx-vals='{"tabId": {{ tab.id | json_encode }} }'
+      >x</button>
+      </div>
+      {% endfor %}
+      <button
+        class="tab-button tab-plus"
+        type="button"
+        hx-get="command/new_tab"
+        hx-target="#main-root"
+        hx-swap="outerHTML"
+        hx-vals='{"path": {{ active_path | json_encode }} }'
+      >+</button>
     </div>
-    {% endfor %}
-    <button
-      class="tab-button tab-plus"
-      type="button"
-      hx-get="command/new_tab"
-      hx-target="#main-root"
-      hx-swap="outerHTML"
-      hx-vals='{"path": {{ active_path | json_encode }} }'
-    >+</button>
+    <div class="tabs-drag-gutter" data-tauri-drag-region></div>
   </div>
 
   <div class="finder-layout">
@@ -1721,6 +1748,10 @@
       const rootPath = root.dataset.rootPath || "";
       const showHidden = (root.dataset.showHidden || "").toLowerCase() === "true";
       const getCurrentWindowHandle = window.__TAURI__?.window?.getCurrentWindow;
+      const isMacOS = /\bMac\b/i.test(navigator.platform || "") || /\bMac OS X\b/i.test(navigator.userAgent || "");
+      if (isMacOS && window.htmx?.config) {
+        window.htmx.config.ignoreTitle = true;
+      }
       let lastAppliedWindowTitle = "";
       const displayWindowPath = (rawPath) => {
         const value = String(rawPath || "").trim() || "/";
@@ -1733,6 +1764,7 @@
         return value;
       };
       const applyWindowTitle = (value) => {
+        if (isMacOS) return;
         const title = displayWindowPath(value || rootPath || "/");
         if (!title || title === lastAppliedWindowTitle) return;
         lastAppliedWindowTitle = title;
@@ -4184,10 +4216,24 @@
         });
       }
       const tabsBar = root.querySelector(".tabs-bar");
+      const tabsList = root.querySelector(".tabs-list");
       let suppressTabClickUntil = 0;
       if (tabsBar) {
+        tabsBar.addEventListener("mousedown", (event) => {
+          if (event.button !== 0) return;
+          if (event.target.closest(".tab-shell, .tab-plus, .tab-close")) return;
+          const getCurrentWindow = window.__TAURI__?.window?.getCurrentWindow;
+          if (typeof getCurrentWindow !== "function") return;
+          const currentWindow = getCurrentWindow();
+          if (!currentWindow || typeof currentWindow.startDragging !== "function") return;
+          currentWindow.startDragging().catch((error) => {
+            logNav("startDragging failed", {error: String(error)});
+          });
+        });
+      }
+      if (tabsList) {
         if (typeof window.Sortable === "function") {
-          new window.Sortable(tabsBar, {
+          new window.Sortable(tabsList, {
             draggable: ".tab-shell[data-tab-id]",
             handle: ".tab-button",
             filter: ".tab-close",
@@ -4202,7 +4248,7 @@
               suppressTabClickUntil = Date.now() + 500;
               const moved = Number(event?.oldIndex) !== Number(event?.newIndex);
               if (!moved) return;
-              const ordered = Array.from(tabsBar.querySelectorAll(".tab-shell[data-tab-id]"))
+              const ordered = Array.from(tabsList.querySelectorAll(".tab-shell[data-tab-id]"))
                 .map((tab) => tab.dataset.tabId || "")
                 .filter((value) => value.length > 0);
               htmxCommandSwap("reorder_tabs", {tabIds: ordered.join(",")});
