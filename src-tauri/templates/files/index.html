@@ -1951,6 +1951,18 @@
         rows.find((row) => row.dataset.path === getFocusPath()) ||
         rightmostSelected() ||
         null;
+      const rightmostSelectedDirectory = () =>
+        [...selectedRows()]
+          .filter((row) => (row.dataset.isDir || "") === "true")
+          .sort((a, b) => Number(a.dataset.column) - Number(b.dataset.column))
+          .at(-1) || null;
+      const selectedDirectoryPath = () => {
+        const focused = focusedRow();
+        if ((focused?.dataset?.isDir || "") === "true") {
+          return focused.dataset.path || "";
+        }
+        return rightmostSelectedDirectory()?.dataset?.path || "";
+      };
       const toRelativePath = (path) => {
         const value = String(path || "");
         if (!value) return "";
@@ -4416,22 +4428,29 @@
         const column = body.closest(".finder-column");
         if (!isMainColumn(column)) return;
         const columnIndex = Number(column.dataset.column || 0);
+        const columnPath = column.dataset.path || "";
+        if (!columnPath) return;
         const columnRows = rowsByColumn.get(columnIndex) || [];
-        if (columnRows.length === 0) return;
         const lastRow = columnRows[columnRows.length - 1] || null;
-        if (!lastRow) return;
-        const lastRowRect = lastRow.getBoundingClientRect();
-        if (event.clientY < lastRowRect.bottom) return;
-        logNav("column empty-space click select last", {
-          column: column.dataset.column,
-          path: lastRow.dataset.path,
-        });
-        focusAndRevealRow(lastRow);
-        setSingleSelection(lastRow);
-        const path = lastRow.dataset.path || "";
-        if (path) {
-          htmxCommandSwap("navigate", {path});
+        if (lastRow) {
+          const lastRowRect = lastRow.getBoundingClientRect();
+          if (event.clientY < lastRowRect.bottom) return;
         }
+        const directoryRow = rowByPath(columnPath);
+        logNav("column empty-space click select directory", {
+          column: column.dataset.column,
+          path: columnPath,
+          viaRow: !!directoryRow,
+        });
+        if (directoryRow) {
+          focusAndRevealRow(directoryRow);
+          setSingleSelection(directoryRow);
+        } else {
+          setFocusPath(columnPath);
+          setActiveColumn(columnIndex);
+          ensureColumnAndNextVisible(columnIndex);
+        }
+        htmxCommandSwap("navigate", {path: columnPath});
       });
       root.addEventListener("mousedown", (event) => {
         const row = mainRowFromEvent(event);
@@ -4725,7 +4744,8 @@
         ) {
           if (!hasEditableFocus) {
             const currentRow = focusedRow();
-            if (currentRow) {
+            const commandDirectoryContext = selectedDirectoryPath() || currentDirectoryTitle() || rootPath;
+            if (currentRow || commandDirectoryContext) {
               event.preventDefault();
               event.stopPropagation();
               openCommandModal();
@@ -4804,18 +4824,13 @@
           !event.shiftKey
         ) {
           if (!hasEditableFocus) {
-            const current = focusedRow();
-            const columnIndex = Number(current?.dataset?.column ?? NaN);
-            const columnPath =
-              columns.find((column) => Number(column.dataset.column || 0) === columnIndex)?.dataset.path ||
-              current?.closest(".finder-column")?.dataset?.path ||
-              currentDirectoryTitle();
-            if (columnPath) {
+            const directoryPath = selectedDirectoryPath() || currentDirectoryTitle();
+            if (directoryPath) {
               event.preventDefault();
               event.stopPropagation();
               const rootIsUnderHome = rootPath === homePath || rootPath.startsWith(`${homePath}/`);
               const toggledRootPath = rootPath === "/" || rootIsUnderHome ? homePath : "/";
-              htmxCommandSwap("set_tab_root", {path: columnPath === rootPath ? toggledRootPath : columnPath});
+              htmxCommandSwap("set_tab_root", {path: directoryPath === rootPath ? toggledRootPath : directoryPath});
               return;
             }
           }
