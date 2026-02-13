@@ -1789,8 +1789,15 @@
         }
         return value;
       };
-      const applyWindowTitle = (value) => {
+      const applyWindowTitle = (value, reason = "unknown") => {
         const title = displayWindowPath(value || rootPath || "/");
+        logNav("applyWindowTitle", {
+          reason,
+          rawValue: String(value || ""),
+          nextTitle: title,
+          previousTitle: lastAppliedWindowTitle,
+          skipped: !title || title === lastAppliedWindowTitle,
+        });
         if (!title || title === lastAppliedWindowTitle) return;
         setLastAppliedWindowTitle(title);
         if (isMacOS) {
@@ -1813,7 +1820,6 @@
           }
         }
       };
-      applyWindowTitle(rootPath);
       const DEBUG_NAV = true;
       const DEBUG_SCROLL = true;
       const logNav = (...args) => {
@@ -1832,7 +1838,10 @@
       };
 
       const rows = Array.from(root.querySelectorAll(".finder-layout > .finder-column .finder-row"));
-      if (rows.length === 0) return;
+      if (rows.length === 0) {
+        applyWindowTitle(rootPath, "init-no-rows");
+        return;
+      }
       let dragInProgress = false;
       const columns = Array.from(root.querySelectorAll(".finder-layout > .finder-column"));
       const currentDirectoryTitle = () => {
@@ -2045,7 +2054,7 @@
         for (const column of columns) {
           column.classList.toggle("is-active", Number(column.dataset.column) === columnIndex);
         }
-        applyWindowTitle(currentDirectoryTitle());
+        applyWindowTitle(currentDirectoryTitle(), "setActiveColumn");
       };
       const ensureColumnAndNextVisible = (columnIndex) => {
         if (!layout) return;
@@ -2826,6 +2835,8 @@
             }
           }, 0);
         }
+      } else {
+        applyWindowTitle(currentDirectoryTitle(), "init-no-initial-row");
       }
 
       const showContextMenu = (payload) => {
