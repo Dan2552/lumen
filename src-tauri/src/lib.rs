@@ -337,6 +337,7 @@ pub fn run() {
             file_controller::open_in_warp,
             file_controller::open_in_finder,
             file_controller::open_in_github_desktop,
+            file_controller::run_context_terminal_command,
             file_controller::path_context_capabilities,
             file_controller::visible_directories_signature,
         ])

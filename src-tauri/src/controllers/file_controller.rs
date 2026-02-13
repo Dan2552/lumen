@@ -2,6 +2,8 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use flate2::read::GzDecoder;
 use pulldown_cmark::{html, CowStr, Event, Options, Parser, Tag};
 use serde::Serialize;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::{
     collections::{hash_map::DefaultHasher, BTreeMap, BTreeSet, HashMap, VecDeque},
     env, fs,
@@ -19,6 +21,9 @@ use tauri::{
 };
 use tera::Context;
 use zip::ZipArchive;
+
+#[path = "file_controller/context/mod.rs"]
+mod context;
 
 #[derive(Debug, Serialize)]
 struct FileEntry {
@@ -98,6 +103,7 @@ pub struct PathContextCapabilities {
     is_dir: bool,
     show_default_open: bool,
     show_github_desktop: bool,
+    context_commands: Vec<context::ContextCommand>,
 }
 
 #[derive(Debug, Serialize)]
@@ -3540,6 +3546,111 @@ fn open_path_with_application(app_name: &str, path: &Path) -> Result<(), String>
     }
 }
 
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn applescript_string_literal(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len() + 2);
+    escaped.push('"');
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped.push('"');
+    escaped
+}
+
+fn run_terminal_command_in_directory(directory: &Path, command: &str) -> Result<(), String> {
+    let trimmed = command.trim();
+    if trimmed.is_empty() {
+        return Err("command cannot be empty".to_string());
+    }
+    let directory_value = directory.to_string_lossy().to_string();
+    let shell_command = format!("cd {} && {}", shell_single_quote(&directory_value), trimmed);
+
+    #[cfg(target_os = "macos")]
+    {
+        let script = format!(
+            "tell application \"Terminal\" to do script {}",
+            applescript_string_literal(&shell_command)
+        );
+        let status = Command::new("osascript")
+            .arg("-e")
+            .arg("tell application \"Terminal\" to activate")
+            .arg("-e")
+            .arg(script)
+            .status()
+            .map_err(|error| error.to_string())?;
+        if status.success() {
+            return Ok(());
+        }
+        return Err("failed to run command in Terminal".to_string());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let status = Command::new("sh")
+            .arg("-lc")
+            .arg(&shell_command)
+            .current_dir(directory)
+            .status()
+            .map_err(|error| error.to_string())?;
+        if status.success() {
+            return Ok(());
+        }
+        return Err("command failed".to_string());
+    }
+}
+
+fn resolve_bin_script_path_for_command(
+    directory: &Path,
+    command: &context::ContextCommand,
+) -> Option<PathBuf> {
+    if !command.id.starts_with("bin:") {
+        return None;
+    }
+    let trimmed = command.command.trim();
+    let relative = trimmed.strip_prefix("./")?;
+    let mut components = Path::new(relative).components();
+    let first = components.next()?;
+    let second = components.next()?;
+    if components.next().is_some() {
+        return None;
+    }
+    let first = first.as_os_str().to_str()?;
+    let second = second.as_os_str().to_str()?;
+    if first != "bin" || second.is_empty() {
+        return None;
+    }
+    Some(directory.join(first).join(second))
+}
+
+fn ensure_executable_if_needed(path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
+        let mut permissions = metadata.permissions();
+        let current_mode = permissions.mode();
+        let executable_mode = current_mode | 0o111;
+        if executable_mode != current_mode {
+            permissions.set_mode(executable_mode);
+            fs::set_permissions(path, permissions).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(())
+    }
+}
+
 #[tauri::command]
 pub fn open_in_default(path: String) -> Result<(), String> {
     let target = resolve_absolute_existing_path(&path)?;
@@ -3739,6 +3850,26 @@ pub fn open_in_github_desktop(
     open_in_github_desktop_with_tab_root(path, tab_root)
 }
 
+#[tauri::command]
+pub fn run_context_terminal_command(path: String, command_id: String) -> Result<(), String> {
+    let target = resolve_absolute_existing_path(&path)?;
+    if !target.is_dir() {
+        return Err("command path must be a directory".to_string());
+    }
+    let command_key = command_id.trim();
+    if command_key.is_empty() {
+        return Err("command id cannot be empty".to_string());
+    }
+    let command = context::commands_for_directory(&target)
+        .into_iter()
+        .find(|entry| entry.id == command_key)
+        .ok_or_else(|| "command is not available for this directory".to_string())?;
+    if let Some(script_path) = resolve_bin_script_path_for_command(&target, &command) {
+        ensure_executable_if_needed(&script_path)?;
+    }
+    run_terminal_command_in_directory(&target, &command.command)
+}
+
 fn active_tab_root_for_state(
     tabs_state: &State<'_, FileTabsState>,
     window_label: &str,
@@ -3833,10 +3964,16 @@ pub fn path_context_capabilities(
 
     let target = resolve_absolute_existing_path(&path)?;
     let is_dir = target.is_dir();
+    let context_commands = if is_dir {
+        context::commands_for_directory(&target)
+    } else {
+        Vec::new()
+    };
     Ok(PathContextCapabilities {
         is_dir,
         show_default_open: should_show_default_open_for_path(&target, is_dir),
         show_github_desktop: is_dir
             && resolve_github_desktop_repo_for_path(&target, &tab_root).is_some(),
+        context_commands,
     })
 }

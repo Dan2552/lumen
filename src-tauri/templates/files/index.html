@@ -2839,6 +2839,23 @@
       const isSearchOpen = () => !!searchRoot && !searchRoot.hidden;
       const isGotoOpen = () => !!gotoModal && !gotoModal.hidden;
       const isCommandOpen = () => !!commandModal && !commandModal.hidden;
+      const runContextTerminalCommand = async (directoryPath, commandId) => {
+        if (typeof invoke !== "function") return;
+        const path = String(directoryPath || "");
+        const id = String(commandId || "").trim();
+        if (!path || !id) return;
+        try {
+          await invoke("run_context_terminal_command", {path, commandId: id});
+        } catch (error) {
+          logNav("run_context_terminal_command failed", {path, commandId: id, error: String(error)});
+          await openFilesModal({
+            title: "Run command",
+            message: String(error || "Failed to run command."),
+            confirmLabel: "Close",
+            kind: "confirm",
+          });
+        }
+      };
       const runContextAction = async (action, pathOrPaths) => {
         if (!action) return;
         const targetPaths = Array.from(
@@ -3547,7 +3564,16 @@
         is_dir: !!isDir,
         show_default_open: false,
         show_github_desktop: false,
+        context_commands: [],
       });
+      const normalizeContextCommands = (commands) =>
+        (Array.isArray(commands) ? commands : [])
+          .map((entry) => ({
+            id: String(entry?.id || "").trim(),
+            label: String(entry?.label || "").trim(),
+            command: String(entry?.command || "").trim(),
+          }))
+          .filter((entry) => entry.id && entry.label && entry.command);
       const maybeLoadCommandCapabilities = (path, isDir) => {
         if (!path || typeof invoke !== "function") return;
         if (commandCapabilitiesByPath.has(path)) return;
@@ -3558,6 +3584,7 @@
               is_dir: !!capabilities?.is_dir,
               show_default_open: !!capabilities?.show_default_open,
               show_github_desktop: !!capabilities?.show_github_desktop,
+              context_commands: normalizeContextCommands(capabilities?.context_commands),
             });
             if (isCommandOpen()) {
               renderCommandItems();
@@ -3668,6 +3695,26 @@
             });
           }
         };
+        const pushContextCommandSet = (targetItems, labelPrefix, directoryPath, directoryCapabilities) => {
+          if (!directoryPath) return;
+          const contextCommands = Array.isArray(directoryCapabilities?.context_commands)
+            ? directoryCapabilities.context_commands
+            : [];
+          for (const contextCommand of contextCommands) {
+            const commandId = String(contextCommand?.id || "");
+            const commandLabel = String(contextCommand?.label || "");
+            const commandText = String(contextCommand?.command || "");
+            if (!commandId || !commandLabel || !commandText) continue;
+            targetItems.push({
+              label: `${labelPrefix}: ${commandLabel}`,
+              hint: commandText,
+              run: () => {
+                closeCommandModal();
+                runContextTerminalCommand(directoryPath, commandId);
+              },
+            });
+          }
+        };
 
         tabItems.push({
           label: "Tab: Go to location",
@@ -3728,6 +3775,7 @@
               },
             });
           }
+          pushContextCommandSet(tabItems, "Tab Root Directory", rootPath, rootCapabilities);
         }
 
         if (currentPath) {
@@ -3753,9 +3801,21 @@
               selectedDirectoryPath,
               selectedDirectoryCapabilities,
             );
+            pushContextCommandSet(
+              selectedDirectoryItems,
+              "Selected Directory",
+              selectedDirectoryPath,
+              selectedDirectoryCapabilities,
+            );
           }
           if (currentDirectoryPath) {
             pushDirectoryCommandSet(
+              currentDirectoryItems,
+              "Current Directory",
+              currentDirectoryPath,
+              currentDirectoryCapabilities,
+            );
+            pushContextCommandSet(
               currentDirectoryItems,
               "Current Directory",
               currentDirectoryPath,
@@ -3816,6 +3876,12 @@
           });
         } else if (currentColumnPath) {
           pushDirectoryCommandSet(
+            currentDirectoryItems,
+            "Current Directory",
+            currentColumnPath,
+            currentDirectoryCapabilities,
+          );
+          pushContextCommandSet(
             currentDirectoryItems,
             "Current Directory",
             currentColumnPath,
