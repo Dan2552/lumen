@@ -40,7 +40,7 @@
       gap: 6px;
       min-width: 0;
       flex: 1 1 auto;
-      overflow-x: auto;
+      overflow: hidden;
     }
 
     .tabs-left-gutter {
@@ -78,13 +78,14 @@
     }
 
     .tab-shell {
-      display: inline-flex;
+      display: flex;
       align-items: center;
       border: 1px solid #4b5364;
       border-radius: 7px;
       background: #3a4254;
       overflow: hidden;
-      flex-shrink: 0;
+      flex: 1 1 0;
+      min-width: 0;
       max-width: 220px;
     }
 
@@ -105,7 +106,10 @@
     .tab-shell .tab-button {
       border: none;
       background: transparent;
-      max-width: 188px;
+      min-width: 0;
+      max-width: none;
+      width: 100%;
+      flex: 1 1 auto;
       border-radius: 0;
     }
 
@@ -114,16 +118,32 @@
     }
 
     .tab-close {
-      width: 24px;
-      min-width: 24px;
+      width: 0;
+      min-width: 0;
       height: 28px;
       border: none;
-      border-left: 1px solid rgba(140, 150, 170, 0.35);
+      border-left: 1px solid transparent;
       background: transparent;
       color: #aeb6c7;
       font-size: 12px;
       cursor: default;
       padding: 0;
+      opacity: 0;
+      pointer-events: none;
+      transition:
+        width 120ms ease,
+        min-width 120ms ease,
+        opacity 120ms ease,
+        border-left-color 120ms ease;
+    }
+
+    .tab-shell:hover .tab-close,
+    .tab-shell:focus-within .tab-close {
+      width: 24px;
+      min-width: 24px;
+      opacity: 1;
+      pointer-events: auto;
+      border-left-color: rgba(140, 150, 170, 0.35);
     }
 
     .tab-shell.is-active .tab-close {
@@ -134,6 +154,7 @@
     .tab-plus {
       width: 28px;
       min-width: 28px;
+      flex: 0 0 28px;
       justify-content: center;
       font-size: 15px;
       padding: 0;
