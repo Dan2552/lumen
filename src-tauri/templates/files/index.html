@@ -3520,10 +3520,11 @@
             gotoInput.select();
           });
       };
-      const openSearchPalette = () => {
+      const openSearchPalette = (initialQuery = "") => {
         if (!searchRoot || !searchInput) return;
+        const query = String(initialQuery || "");
         searchRoot.hidden = false;
-        searchInput.value = "";
+        searchInput.value = query;
         searchSelectedIndex = 0;
         searchSelectedPath = null;
         searchUserPicked = false;
@@ -3534,12 +3535,17 @@
         }
         lastSearchResultsHtml = "";
         setSearchStatus("");
-        requestSearch("");
+        requestSearch(query);
         startSearchPolling();
         pollSearchResults();
         setTimeout(() => {
           searchInput.focus();
-          searchInput.select();
+          if (query.length > 0 && typeof searchInput.setSelectionRange === "function") {
+            const end = query.length;
+            searchInput.setSelectionRange(end, end);
+          } else {
+            searchInput.select();
+          }
         }, 0);
       };
       const openSearchSelection = () => {
@@ -4692,14 +4698,32 @@
           }
           return;
         }
+        const activeTag = document.activeElement?.tagName || "";
+        const hasEditableFocus =
+          activeTag === "INPUT" ||
+          activeTag === "TEXTAREA" ||
+          activeTag === "SELECT" ||
+          !!document.activeElement?.isContentEditable;
+        if (
+          /^[a-z0-9]$/i.test(event.key || "") &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.altKey &&
+          !isSearchOpen() &&
+          !hasEditableFocus
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          openSearchPalette(event.key);
+          return;
+        }
         if (
           event.key === "Enter" &&
           !event.metaKey &&
           !event.ctrlKey &&
           !event.altKey
         ) {
-          const activeTag = document.activeElement?.tagName || "";
-          if (activeTag !== "INPUT" && activeTag !== "TEXTAREA" && activeTag !== "SELECT" && !document.activeElement?.isContentEditable) {
+          if (!hasEditableFocus) {
             const currentRow = focusedRow();
             if (currentRow) {
               event.preventDefault();
@@ -4710,9 +4734,7 @@
           }
         }
         if ((event.metaKey || event.ctrlKey) && lowered === "a") {
-          const activeTag = document.activeElement?.tagName || "";
-          if (activeTag === "INPUT" || activeTag === "TEXTAREA" || activeTag === "SELECT") return;
-          if (document.activeElement?.isContentEditable) return;
+          if (hasEditableFocus) return;
           event.preventDefault();
           event.stopPropagation();
           const current = focusedRow();
@@ -4781,13 +4803,7 @@
           !event.altKey &&
           !event.shiftKey
         ) {
-          const activeTag = document.activeElement?.tagName || "";
-          if (
-            activeTag !== "INPUT" &&
-            activeTag !== "TEXTAREA" &&
-            activeTag !== "SELECT" &&
-            !document.activeElement?.isContentEditable
-          ) {
+          if (!hasEditableFocus) {
             const current = focusedRow();
             const columnIndex = Number(current?.dataset?.column ?? NaN);
             const columnPath =
@@ -4806,9 +4822,7 @@
         }
         if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) return;
 
-        const activeTag = document.activeElement?.tagName || "";
-        if (activeTag === "INPUT" || activeTag === "TEXTAREA" || activeTag === "SELECT") return;
-        if (document.activeElement?.isContentEditable) return;
+        if (hasEditableFocus) return;
         event.preventDefault();
 
         const current =
