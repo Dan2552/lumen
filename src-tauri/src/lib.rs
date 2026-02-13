@@ -3,6 +3,7 @@ mod templates;
 mod controllers {
     pub mod file_controller;
 }
+mod shell_control;
 use controllers::file_controller;
 use serde::Serialize;
 use std::collections::BTreeSet;
@@ -167,6 +168,7 @@ pub fn run() {
         .manage(file_controller::FileTabsState::default())
         .manage(file_controller::FileContextMenuState::default())
         .manage(file_controller::FileSearchState::default())
+        .manage(shell_control::ShellControlState::default())
         .manage(HoldState::default())
         .setup(|app| {
             file_controller::restore_main_window_state(&app.handle());
@@ -299,6 +301,12 @@ pub fn run() {
             hold_set_items,
             hold_add_items,
             hold_clear_items,
+            shell_control::shell_control_get_socket_path,
+            shell_control::shell_control_get_or_discover_socket_path,
+            shell_control::shell_control_set_socket_path,
+            shell_control::shell_control_cd,
+            shell_control::shell_control_exec,
+            shell_control::shell_control_ping,
             file_controller::index,
             file_controller::navigate,
             file_controller::validate_location_path,

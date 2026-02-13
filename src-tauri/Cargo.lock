@@ -2409,6 +2409,7 @@ dependencies = [
  "cc",
  "flate2",
  "include_dir",
+ "libc",
  "objc",
  "png",
  "pulldown-cmark",

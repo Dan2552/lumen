@@ -1850,6 +1850,23 @@
       const commandCapabilitiesByPath = new Map();
       const searchPreviewObjectUrls = [];
       let lastSearchResultsHtml = "";
+      window.__filesShellSocketPath =
+        typeof window.__filesShellSocketPath === "string" ? window.__filesShellSocketPath : "";
+      window.__filesShellLastSyncedPathByTab = window.__filesShellLastSyncedPathByTab || {};
+      const getShellSocketPath = () => String(window.__filesShellSocketPath || "");
+      const setShellSocketPath = (value) => {
+        window.__filesShellSocketPath = String(value || "");
+      };
+      const getLastShellSyncedPath = () => window.__filesShellLastSyncedPathByTab[activeTabId] || "";
+      const setLastShellSyncedPath = (path) => {
+        const normalized = String(path || "");
+        if (!normalized) {
+          delete window.__filesShellLastSyncedPathByTab[activeTabId];
+          return;
+        }
+        window.__filesShellLastSyncedPathByTab[activeTabId] = normalized;
+      };
+      let syncShellWithActiveDirectory = () => {};
       window.__filesScrollStateByTab = window.__filesScrollStateByTab || {};
       window.__filesDirectorySignatureByTab = window.__filesDirectorySignatureByTab || {};
       const getScrollState = () => window.__filesScrollStateByTab[activeTabId] || null;
@@ -1968,6 +1985,7 @@
           column.classList.toggle("is-active", Number(column.dataset.column) === columnIndex);
         }
         applyWindowTitle(currentDirectoryTitle());
+        syncShellWithActiveDirectory();
       };
       const ensureColumnAndNextVisible = (columnIndex) => {
         if (!layout) return;
@@ -2067,6 +2085,7 @@
         if (options.anchorPath !== undefined) {
           setSelectionAnchorPath(options.anchorPath);
         }
+        syncShellWithActiveDirectory();
       };
       const setSingleSelection = (row) => {
         if (!row) return;
@@ -2200,6 +2219,17 @@
         const lastSlash = normalized.lastIndexOf("/");
         if (lastSlash <= 0) return "/";
         return normalized.slice(0, lastSlash);
+      };
+      const latestSelectionParentDirectoryForShell = () => {
+        const focusPath = String(getFocusPath() || "").trim();
+        const focusedPath = String(focusedRow()?.dataset?.path || "").trim();
+        const rightmostSelectedPath = String(rightmostSelected()?.dataset?.path || "").trim();
+        const selectedPath = focusPath || focusedPath || rightmostSelectedPath || "";
+        if (selectedPath) {
+          return parentDirectoryForPath(selectedPath);
+        }
+        const fallbackDirectory = String(currentDirectoryTitle() || rootPath || "/").trim();
+        return normalizePathForCompare(fallbackDirectory) || "/";
       };
       const hasMeaningfulDropTarget = (targetDir) => {
         const normalizedTarget = normalizePathForCompare(targetDir);
@@ -2791,6 +2821,76 @@
         }
       };
       const invoke = window.__TAURI__?.core?.invoke;
+      const connectShellControlSocket = async () => {
+        if (typeof invoke !== "function") return;
+        let message = "Enter the lumen-shell control socket path:";
+        let value = getShellSocketPath();
+        while (true) {
+          const result = await openFilesModal({
+            title: "Connect Shell",
+            message,
+            confirmLabel: "Connect",
+            kind: "prompt",
+            initialValue: value,
+          });
+          if (!result.confirmed) return;
+          const trimmed = String(result.value || "").trim();
+          if (!trimmed) {
+            message = "Enter the lumen-shell control socket path:\nPath cannot be empty.";
+            continue;
+          }
+          try {
+            const normalized = await invoke("shell_control_set_socket_path", {socketPath: trimmed});
+            setShellSocketPath(normalized || trimmed);
+            setLastShellSyncedPath("");
+            syncShellWithActiveDirectory();
+            return;
+          } catch (error) {
+            value = trimmed;
+            message = `Enter the lumen-shell control socket path:\n${String(
+              error || "Failed to connect shell socket.",
+            )}`;
+          }
+        }
+      };
+      const disconnectShellControlSocket = async () => {
+        if (typeof invoke !== "function") return;
+        try {
+          await invoke("shell_control_set_socket_path", {socketPath: null});
+        } catch (_error) {}
+        setShellSocketPath("");
+        setLastShellSyncedPath("");
+      };
+      syncShellWithActiveDirectory = () => {
+        if (typeof invoke !== "function") return;
+        const directoryPath = normalizePathForCompare(latestSelectionParentDirectoryForShell());
+        if (!directoryPath) return;
+        if (directoryPath === getLastShellSyncedPath()) return;
+        invoke("shell_control_cd", {path: directoryPath})
+          .then((sent) => {
+            if (sent) {
+              setLastShellSyncedPath(directoryPath);
+              if (!getShellSocketPath()) {
+                invoke("shell_control_get_socket_path")
+                  .then((socketPath) => {
+                    if (socketPath) {
+                      setShellSocketPath(socketPath);
+                    }
+                  })
+                  .catch(() => {});
+              }
+            }
+          })
+          .catch(() => {});
+      };
+      if (typeof invoke === "function") {
+        invoke("shell_control_get_or_discover_socket_path")
+          .then((socketPath) => {
+            setShellSocketPath(socketPath || "");
+            syncShellWithActiveDirectory();
+          })
+          .catch(() => {});
+      }
       const invokeCommandSwap = async (command, values) => {
         if (typeof invoke !== "function") {
           throw new Error("Tauri invoke is unavailable.");
@@ -3693,6 +3793,34 @@
             htmxCommandSwap("set_tab_show_hidden", {showHidden: !showHidden});
           },
         });
+        const shellSocketPath = getShellSocketPath();
+        tabItems.push({
+          label: shellSocketPath ? "Shell: Reconnect control socket" : "Shell: Connect control socket",
+          hint: "",
+          run: () => {
+            closeCommandModal();
+            connectShellControlSocket();
+          },
+        });
+        if (shellSocketPath) {
+          tabItems.push({
+            label: "Shell: Disconnect control socket",
+            hint: "",
+            run: () => {
+              closeCommandModal();
+              disconnectShellControlSocket();
+            },
+          });
+          tabItems.push({
+            label: "Shell: Cd to current directory",
+            hint: "",
+            run: () => {
+              closeCommandModal();
+              setLastShellSyncedPath("");
+              syncShellWithActiveDirectory();
+            },
+          });
+        }
         if (rootPath) {
           tabItems.push({
             label: "Tab Root Directory: Open in Zed",
