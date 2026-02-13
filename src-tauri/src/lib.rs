@@ -305,6 +305,7 @@ pub fn run() {
             file_controller::goto_directory_suggestions,
             file_controller::new_window,
             file_controller::go_to_location,
+            file_controller::set_window_title,
             file_controller::activate_tab,
             file_controller::new_tab,
             file_controller::close_tab,

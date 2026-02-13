@@ -1773,7 +1773,12 @@
       if (isMacOS && window.htmx?.config) {
         window.htmx.config.ignoreTitle = true;
       }
-      let lastAppliedWindowTitle = "";
+      window.__filesWindowTitleByTab = window.__filesWindowTitleByTab || {};
+      let lastAppliedWindowTitle = window.__filesWindowTitleByTab[activeTabId] || "";
+      const setLastAppliedWindowTitle = (title) => {
+        lastAppliedWindowTitle = title;
+        window.__filesWindowTitleByTab[activeTabId] = title;
+      };
       const displayWindowPath = (rawPath) => {
         const value = String(rawPath || "").trim() || "/";
         if (!homePath || homePath === "/") return value;
@@ -1785,10 +1790,18 @@
         return value;
       };
       const applyWindowTitle = (value) => {
-        if (isMacOS) return;
         const title = displayWindowPath(value || rootPath || "/");
         if (!title || title === lastAppliedWindowTitle) return;
-        lastAppliedWindowTitle = title;
+        setLastAppliedWindowTitle(title);
+        if (isMacOS) {
+          const titleInvoke = window.__TAURI__?.core?.invoke;
+          if (typeof titleInvoke === "function") {
+            Promise.resolve(titleInvoke("set_window_title", {title})).catch((error) => {
+              logNav("set_window_title failed", {title, error: String(error)});
+            });
+          }
+          return;
+        }
         document.title = title;
         if (typeof getCurrentWindowHandle === "function") {
           const currentWindow = getCurrentWindowHandle();

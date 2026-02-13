@@ -21,6 +21,12 @@ use tauri::{
 };
 use tera::Context;
 use zip::ZipArchive;
+#[cfg(target_os = "macos")]
+use objc2::{msg_send, runtime::AnyObject};
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSWindow, NSWindowButton};
+#[cfg(target_os = "macos")]
+use objc2_foundation::{NSRect, NSString};
 
 #[path = "file_controller/context/mod.rs"]
 mod context;
@@ -194,6 +200,15 @@ struct WindowGeometry {
     y: i32,
     width: u32,
     height: u32,
+}
+
+const MAC_TRAFFIC_LIGHT_X: f64 = 12.0;
+const MAC_TRAFFIC_LIGHT_Y: f64 = 22.0;
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy)]
+struct MacLogicalPosition {
+    x: f64,
+    y: f64,
 }
 
 fn default_active_id() -> u64 {
@@ -2457,10 +2472,124 @@ fn ensure_browser_window<R: Runtime>(
     {
         builder = builder
             .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .traffic_light_position(LogicalPosition::new(12.0, 22.0))
+            .traffic_light_position(LogicalPosition::new(MAC_TRAFFIC_LIGHT_X, MAC_TRAFFIC_LIGHT_Y))
             .hidden_title(true);
     }
-    builder.build()
+    let window = builder.build()?;
+    #[cfg(target_os = "macos")]
+    {
+        let _ = reapply_macos_traffic_lights_webview(&window);
+    }
+    Ok(window)
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn layout_window_traffic_lights(
+    ns_window: *mut NSWindow,
+    point: MacLogicalPosition,
+    space_between: Option<f64>,
+) {
+    let (x, y) = (point.x, point.y);
+
+    let close_button: *mut AnyObject =
+        unsafe { msg_send![ns_window, standardWindowButton: NSWindowButton::CloseButton] };
+    let minimize_button: *mut AnyObject = unsafe {
+        msg_send![ns_window, standardWindowButton: NSWindowButton::MiniaturizeButton]
+    };
+    let zoom_button: *mut AnyObject =
+        unsafe { msg_send![ns_window, standardWindowButton: NSWindowButton::ZoomButton] };
+    if close_button.is_null() || minimize_button.is_null() || zoom_button.is_null() {
+        return;
+    }
+
+    let titlebar_container: *mut AnyObject = unsafe {
+        let view: *mut AnyObject = msg_send![close_button, superview];
+        msg_send![view, superview]
+    };
+    if titlebar_container.is_null() {
+        return;
+    }
+
+    let close_frame: NSRect = unsafe { msg_send![close_button, frame] };
+    let mini_frame: NSRect = unsafe { msg_send![minimize_button, frame] };
+    let space_between = space_between.unwrap_or_else(|| mini_frame.origin.x - close_frame.origin.x);
+
+    let window_frame: NSRect = unsafe { msg_send![ns_window, frame] };
+    let mut titlebar_frame: NSRect = unsafe { msg_send![titlebar_container, frame] };
+    titlebar_frame.size.height = close_frame.size.height + y;
+    titlebar_frame.origin.y = window_frame.size.height - titlebar_frame.size.height;
+    let _: () = unsafe { msg_send![titlebar_container, setFrame: titlebar_frame] };
+
+    for (index, button) in [close_button, minimize_button, zoom_button].iter().enumerate() {
+        let mut frame: NSRect = unsafe { msg_send![*button, frame] };
+        frame.origin.x = x + (index as f64 * space_between);
+        frame.origin.y = (titlebar_frame.size.height - frame.size.height) / 2.0;
+        let _: () = unsafe { msg_send![*button, setFrame: frame] };
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn reapply_macos_traffic_lights_webview<R: Runtime>(
+    window: &tauri::WebviewWindow<R>,
+) -> Result<(), String> {
+    let ns_window_ptr = window.ns_window().map_err(|error| error.to_string())?;
+    let ns_window_ptr = ns_window_ptr as usize;
+    window
+        .run_on_main_thread(move || {
+            // SAFETY: `ns_window_ptr` is obtained from Tauri for this live window and used only on
+            // the main thread where AppKit view operations are valid.
+            let ns_window = ns_window_ptr as *mut NSWindow;
+            unsafe {
+                layout_window_traffic_lights(
+                    ns_window,
+                    MacLogicalPosition {
+                        x: MAC_TRAFFIC_LIGHT_X,
+                        y: MAC_TRAFFIC_LIGHT_Y,
+                    },
+                    None,
+                );
+            }
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(target_os = "macos")]
+fn set_macos_title_and_relayout<R: Runtime>(window: &Window<R>, title: &str) -> Result<(), String> {
+    let ns_window_ptr = window.ns_window().map_err(|error| error.to_string())?;
+    let ns_window_ptr = ns_window_ptr as usize;
+    let title = title.to_string();
+    window
+        .run_on_main_thread(move || {
+            // SAFETY: `ns_window_ptr` is obtained from Tauri for this live window and used only on
+            // the main thread where AppKit view operations are valid.
+            let ns_window = ns_window_ptr as *mut NSWindow;
+            unsafe {
+                let ns_title = NSString::from_str(&title);
+                let _: () = msg_send![ns_window, setTitle: &*ns_title];
+                layout_window_traffic_lights(
+                    ns_window,
+                    MacLogicalPosition {
+                        x: MAC_TRAFFIC_LIGHT_X,
+                        y: MAC_TRAFFIC_LIGHT_Y + 4.0,
+                    },
+                    None,
+                );
+            }
+        })
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn set_window_title(window: Window, title: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        set_macos_title_and_relayout(&window, &title)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        window.set_title(&title).map_err(|error| error.to_string())?;
+        Ok(())
+    }
 }
 
 fn next_window_label<R: Runtime>(app: &AppHandle<R>) -> String {
