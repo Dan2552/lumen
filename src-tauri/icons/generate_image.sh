@@ -32,7 +32,7 @@ resize_to() {
   local out="$3"
   mkdir -p "$(dirname "$out")"
   echo "Generating $(basename "$out") (${w}x${h})"
-  convert "$SRC" -resize "${w}x${h}" "$out"
+  magick "$SRC" -resize "${w}x${h}" -alpha on -background none -define png:color-type=6 "$out"
 }
 
 # Parse size from filename patterns and generate the target
@@ -108,9 +108,9 @@ mkdir -p "$ICONSET_DIR"
 sizes=(16 32 64 128 256 512 1024)
 for sz in "${sizes[@]}"; do
   # 1x
-  convert "$SRC" -resize "${sz}x${sz}" "${ICONSET_DIR}/icon_${sz}x${sz}.png"
+  magick "$SRC" -resize "${sz}x${sz}" -alpha on -background none -define png:color-type=6 "${ICONSET_DIR}/icon_${sz}x${sz}.png"
   # 2x
-  convert "$SRC" -resize "$((sz*2))x$((sz*2))" "${ICONSET_DIR}/icon_${sz}x${sz}@2x.png"
+  magick "$SRC" -resize "$((sz*2))x$((sz*2))" -alpha on -background none -define png:color-type=6 "${ICONSET_DIR}/icon_${sz}x${sz}@2x.png"
 done
 
 # Build the .icns (requires iconutil on macOS)
@@ -126,7 +126,7 @@ ICO_OUT="${DIR}/icon.ico"
 echo "Rebuilding .ico ..."
 # Use ImageMagick's auto-resize to embed standard sizes in a single .ico
 # Includes common sizes: 16, 24, 32, 48, 64, 128, 256
-convert "$SRC" -define icon:auto-resize=16,24,32,48,64,128,256 "$ICO_OUT"
+magick "$SRC" -alpha on -define icon:auto-resize=16,24,32,48,64,128,256 "$ICO_OUT"
 echo "Built $(basename "$ICO_OUT")"
 
 echo "Done."
