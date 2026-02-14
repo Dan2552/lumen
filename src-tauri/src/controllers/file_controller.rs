@@ -283,6 +283,7 @@ fn list_directory(
     path: &PathBuf,
     sort_mode: DirectorySortMode,
     show_hidden: bool,
+    home: &Path,
 ) -> Vec<FileEntry> {
     let Ok(entries) = fs::read_dir(path) else {
         return Vec::new();
@@ -294,7 +295,7 @@ fn list_directory(
             let entry_path = entry.path();
             let file_name = entry.file_name();
             let name = file_name.to_string_lossy().to_string();
-            if !show_hidden && name.starts_with('.') {
+            if !show_hidden && is_hidden_component(path, &name, home) {
                 return None;
             }
             let metadata = entry.metadata().ok()?;
@@ -1626,19 +1627,40 @@ fn is_directory(path: &Path) -> bool {
 }
 
 fn has_hidden_component_between(root: &Path, target: &Path) -> bool {
-    target
-        .strip_prefix(root)
-        .ok()
-        .map(|relative| {
-            relative.components().any(|component| {
-                component
-                    .as_os_str()
-                    .to_str()
-                    .map(|value| value.starts_with('.') && value != "." && value != "..")
-                    .unwrap_or(false)
-            })
-        })
-        .unwrap_or(false)
+    let home = home_directory();
+    let Ok(relative) = target.strip_prefix(root) else {
+        return false;
+    };
+    let mut parent = root.to_path_buf();
+    for component in relative.components() {
+        let Some(value) = component.as_os_str().to_str() else {
+            continue;
+        };
+        if is_hidden_component(&parent, value, &home) {
+            return true;
+        }
+        parent.push(component.as_os_str());
+    }
+    false
+}
+
+fn is_hidden_component(parent: &Path, value: &str, home: &Path) -> bool {
+    if value == "." || value == ".." {
+        return false;
+    }
+    if value.starts_with('.') {
+        return true;
+    }
+    if value == "Library" && parent == home {
+        return true;
+    }
+    let pictures = home.join("Pictures");
+    if parent == pictures
+        && (value == "Photo Booth Library" || value == "Photos Library.photoslibrary")
+    {
+        return true;
+    }
+    parent == home && value == "Music"
 }
 
 fn build_columns(
@@ -1660,7 +1682,7 @@ fn build_columns(
             .get(&parent_dir.to_string_lossy().to_string())
             .copied()
             .unwrap_or(DirectorySortMode::Alphabetical);
-        let entries = list_directory(&parent_dir, sort_mode, show_hidden);
+        let entries = list_directory(&parent_dir, sort_mode, show_hidden, home);
         let selected_path = if let Some(component) = components.get(depth) {
             let candidate = parent_dir.join(component);
             let candidate_str = candidate.to_string_lossy().to_string();
@@ -2395,18 +2417,20 @@ fn run_fuzzy_search_worker(
     const FLUSH_EVERY: u64 = 40;
     let query_lower = query.to_ascii_lowercase();
     let mut queue = VecDeque::from([root.clone()]);
+    let home = home_directory();
     let mut scanned = 0u64;
     let mut ranked: Vec<(i64, SearchResultItem)> = Vec::new();
 
     while let Some(directory) = queue.pop_front() {
-        let entries = match fs::read_dir(&directory) {
+            let entries = match fs::read_dir(&directory) {
             Ok(entries) => entries,
             Err(_) => continue,
         };
         for entry in entries.flatten() {
             let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
-            if !show_hidden && name.starts_with('.') {
+            let is_hidden = is_hidden_component(&directory, &name, &home);
+            if !show_hidden && is_hidden {
                 continue;
             }
             scanned += 1;
@@ -3036,7 +3060,7 @@ pub fn goto_directory_suggestions(path: String) -> Vec<GoToDirectorySuggestion> 
     let segment_lower = segment.to_ascii_lowercase();
     let show_hidden = segment.starts_with('.');
     let mut ranked: Vec<(i64, String)> = Vec::new();
-    let Ok(entries) = fs::read_dir(parent_dir) else {
+    let Ok(entries) = fs::read_dir(&parent_dir) else {
         return Vec::new();
     };
 
@@ -3052,7 +3076,7 @@ pub fn goto_directory_suggestions(path: String) -> Vec<GoToDirectorySuggestion> 
         if name.is_empty() {
             continue;
         }
-        if !show_hidden && name.starts_with('.') {
+        if !show_hidden && is_hidden_component(&parent_dir, &name, &home) {
             continue;
         }
 
@@ -3512,7 +3536,7 @@ fn parse_paths_json_arg(paths_json: &str) -> Result<Vec<String>, String> {
     Ok(unique.into_iter().collect())
 }
 
-fn directory_listing_signature(path: &Path, show_hidden: bool) -> u64 {
+fn directory_listing_signature(path: &Path, show_hidden: bool, home: &Path) -> u64 {
     let mut hasher = DefaultHasher::new();
     path.to_string_lossy().to_string().hash(&mut hasher);
 
@@ -3521,7 +3545,7 @@ fn directory_listing_signature(path: &Path, show_hidden: bool) -> u64 {
         Ok(entries) => {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                if !show_hidden && name.starts_with('.') {
+                if !show_hidden && is_hidden_component(path, &name, home) {
                     continue;
                 }
                 let metadata = match entry.metadata() {
@@ -3582,7 +3606,7 @@ pub fn visible_directories_signature(
         if !path_buf.is_absolute() || !path_buf.is_dir() {
             continue;
         }
-        directory_listing_signature(&path_buf, show_hidden).hash(&mut hasher);
+        directory_listing_signature(&path_buf, show_hidden, &home).hash(&mut hasher);
     }
     Ok(format!("{:016x}", hasher.finish()))
 }
