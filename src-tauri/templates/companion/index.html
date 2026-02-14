@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Lumen Companion</title>
+    <style>
+      :root {
+        --bg: #12151c;
+        --panel: #1d2330;
+        --panel-strong: #242c3b;
+        --line: #394156;
+        --line-strong: #4a5470;
+        --text: #eaf0ff;
+        --muted: #a7b1c7;
+        --accent: #3a87ee;
+        --accent-strong: #2f75d5;
+        --selected: #2c4770;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        background: radial-gradient(circle at top right, #212938 0%, var(--bg) 45%);
+        color: var(--text);
+        font-family: "SF Pro Text", "SF Pro Display", "Segoe UI", sans-serif;
+      }
+
+      body {
+        min-height: 100dvh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        backdrop-filter: blur(7px);
+        background: rgba(17, 21, 29, 0.88);
+        border-bottom: 1px solid var(--line);
+        padding: 12px 12px 10px;
+      }
+
+      .title-row {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .title {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 650;
+        letter-spacing: 0.01em;
+      }
+
+      .window-label {
+        color: var(--muted);
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .meta {
+        margin-top: 5px;
+        color: var(--muted);
+        font-size: 11px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .goto-row {
+        margin-top: 10px;
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px;
+      }
+
+      .goto-input {
+        width: 100%;
+        height: 36px;
+        border-radius: 9px;
+        border: 1px solid var(--line-strong);
+        background: #141926;
+        color: var(--text);
+        padding: 0 10px;
+        font: inherit;
+        font-size: 13px;
+      }
+
+      .goto-input::placeholder {
+        color: #7783a1;
+      }
+
+      .goto-button {
+        height: 36px;
+        min-width: 78px;
+        border-radius: 9px;
+        border: 1px solid #4e78ae;
+        background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+        color: #f2f7ff;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .breadcrumb {
+        display: flex;
+        gap: 6px;
+        overflow-x: auto;
+        padding: 10px 12px 6px;
+      }
+
+      .crumb {
+        border: 1px solid var(--line-strong);
+        background: var(--panel);
+        color: var(--muted);
+        border-radius: 999px;
+        font: inherit;
+        font-size: 11px;
+        line-height: 1;
+        padding: 7px 10px;
+        white-space: nowrap;
+      }
+
+      .crumb.active {
+        border-color: #669de7;
+        background: #27436b;
+        color: #e8f0ff;
+      }
+
+      .columns {
+        flex: 1;
+        min-height: 0;
+        display: grid;
+        gap: 10px;
+        padding: 8px 10px 12px;
+      }
+
+      .columns.two {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .column {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: linear-gradient(180deg, var(--panel-strong) 0%, var(--panel) 100%);
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
+
+      .column-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 9px 10px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .column-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: #dce7ff;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .column-path {
+        font-size: 10px;
+        color: var(--muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .rows {
+        flex: 1;
+        min-height: 0;
+        overflow: auto;
+        padding: 4px;
+      }
+
+      .row {
+        width: 100%;
+        border: 1px solid transparent;
+        border-radius: 9px;
+        background: transparent;
+        color: var(--text);
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 9px;
+        align-items: center;
+        min-height: 44px;
+        text-align: left;
+        padding: 0 10px;
+        font: inherit;
+      }
+
+      .row:active {
+        background: rgba(101, 140, 196, 0.2);
+      }
+
+      .row.selected {
+        background: var(--selected);
+        border-color: #5a7bac;
+      }
+
+      .row-icon {
+        width: 20px;
+        color: #a8b7d4;
+        text-align: center;
+      }
+
+      .row-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 13px;
+      }
+
+      .row-tail {
+        color: #8ea0c3;
+        font-size: 12px;
+      }
+
+      .status {
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 11px;
+        min-height: 28px;
+        padding: 6px 12px calc(6px + env(safe-area-inset-bottom));
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="title-row">
+        <h1 class="title">Lumen Companion</h1>
+        <div id="window-label" class="window-label">main</div>
+      </div>
+      <div id="meta" class="meta"></div>
+      <div class="goto-row">
+        <input
+          id="goto-input"
+          class="goto-input"
+          type="text"
+          placeholder="/absolute/path"
+          spellcheck="false"
+          autocorrect="off"
+          autocapitalize="off"
+          autocomplete="off"
+        />
+        <button id="goto-button" class="goto-button" type="button">Go</button>
+      </div>
+    </header>
+    <nav id="breadcrumb" class="breadcrumb"></nav>
+    <main id="columns" class="columns"></main>
+    <footer id="status" class="status"></footer>
+
+    <script>
+      (() => {
+        const query = new URLSearchParams(window.location.search);
+        const windowLabel = (query.get("window") || "main").trim() || "main";
+        const statusEl = document.getElementById("status");
+        const windowLabelEl = document.getElementById("window-label");
+        const metaEl = document.getElementById("meta");
+        const breadcrumbEl = document.getElementById("breadcrumb");
+        const columnsEl = document.getElementById("columns");
+        const gotoInput = document.getElementById("goto-input");
+        const gotoButton = document.getElementById("goto-button");
+
+        let latest = null;
+        let latestRevision = "";
+        let syncInFlight = false;
+        let pollTimer = null;
+
+        const iconForEntry = (entry) => {
+          if (entry.is_dir) return "[D]";
+          const icon = String(entry.icon || "");
+          if (icon.includes("image")) return "[IMG]";
+          if (icon.includes("video")) return "[VID]";
+          if (icon.includes("audio")) return "[AUD]";
+          if (icon.includes("archive")) return "[ZIP]";
+          if (icon.includes("code")) return "[CODE]";
+          return "[F]";
+        };
+
+        const setStatus = (message) => {
+          statusEl.textContent = String(message || "");
+        };
+
+        const maxVisibleColumns = () =>
+          window.matchMedia("(orientation: landscape)").matches ? 2 : 1;
+
+        const render = (snapshot) => {
+          if (!snapshot) return;
+          latest = snapshot;
+          windowLabelEl.textContent = snapshot.window_label || windowLabel;
+          metaEl.textContent = `Root: ${snapshot.root_path} | Focus: ${snapshot.active_path || snapshot.root_path}`;
+          gotoInput.value = snapshot.active_path || "";
+
+          breadcrumbEl.innerHTML = "";
+          (snapshot.columns || []).forEach((column, index, columns) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "crumb" + (index === columns.length - 1 ? " active" : "");
+            button.textContent = column.title || column.path || "/";
+            button.addEventListener("click", () => navigate(column.path));
+            breadcrumbEl.appendChild(button);
+          });
+
+          const columns = Array.isArray(snapshot.columns) ? snapshot.columns : [];
+          const maxColumns = maxVisibleColumns();
+          const visibleColumns = columns.slice(Math.max(0, columns.length - maxColumns));
+
+          columnsEl.classList.toggle("two", visibleColumns.length === 2);
+          columnsEl.innerHTML = "";
+
+          visibleColumns.forEach((column, localIndex) => {
+            const columnIndex = columns.length - visibleColumns.length + localIndex;
+            const wrapper = document.createElement("section");
+            wrapper.className = "column";
+
+            const header = document.createElement("div");
+            header.className = "column-header";
+
+            const headerText = document.createElement("div");
+            const title = document.createElement("div");
+            title.className = "column-title";
+            title.textContent = column.title || "/";
+            const path = document.createElement("div");
+            path.className = "column-path";
+            path.textContent = column.path || "";
+            headerText.appendChild(title);
+            headerText.appendChild(path);
+            header.appendChild(headerText);
+            wrapper.appendChild(header);
+
+            const rows = document.createElement("div");
+            rows.className = "rows";
+
+            if (columnIndex > 0) {
+              const upTarget = columns[columnIndex - 1]?.path || "";
+              if (upTarget) {
+                const upRow = document.createElement("button");
+                upRow.type = "button";
+                upRow.className = "row";
+                upRow.innerHTML =
+                  '<span class="row-icon">..</span><span class="row-name">Up</span><span class="row-tail"></span>';
+                upRow.addEventListener("click", () => navigate(upTarget));
+                rows.appendChild(upRow);
+              }
+            }
+
+            (column.entries || []).forEach((entry) => {
+              const row = document.createElement("button");
+              row.type = "button";
+              row.className = "row" + (entry.path === column.selected_path ? " selected" : "");
+              const tail = entry.is_dir ? ">" : "";
+              row.innerHTML =
+                `<span class="row-icon">${iconForEntry(entry)}</span>` +
+                `<span class="row-name"></span>` +
+                `<span class="row-tail">${tail}</span>`;
+              row.querySelector(".row-name").textContent = String(entry.name || "");
+              row.addEventListener("click", () => navigate(entry.path));
+              rows.appendChild(row);
+            });
+
+            wrapper.appendChild(rows);
+            columnsEl.appendChild(wrapper);
+          });
+        };
+
+        const stateUrl = () => `/api/state?window=${encodeURIComponent(windowLabel)}`;
+
+        const fetchState = async ({force = false} = {}) => {
+          if (syncInFlight) return;
+          syncInFlight = true;
+          try {
+            const response = await fetch(stateUrl(), {cache: "no-store"});
+            if (!response.ok) {
+              throw new Error(await response.text());
+            }
+            const snapshot = await response.json();
+            const revision = String(snapshot.revision || "");
+            if (!force && revision && latestRevision && revision === latestRevision) {
+              return;
+            }
+            latestRevision = revision;
+            render(snapshot);
+            setStatus(`Synced ${new Date().toLocaleTimeString()}`);
+          } catch (error) {
+            setStatus(`Sync failed: ${String(error.message || error)}`);
+          } finally {
+            syncInFlight = false;
+          }
+        };
+
+        const navigate = async (path) => {
+          const nextPath = String(path || "").trim();
+          if (!nextPath) return;
+          try {
+            const response = await fetch("/api/navigate", {
+              method: "POST",
+              headers: {"content-type": "application/json"},
+              body: JSON.stringify({window: windowLabel, path: nextPath}),
+            });
+            if (!response.ok) {
+              throw new Error(await response.text());
+            }
+            const snapshot = await response.json();
+            latestRevision = String(snapshot.revision || "");
+            render(snapshot);
+            setStatus(`Navigated to ${snapshot.active_path || nextPath}`);
+          } catch (error) {
+            setStatus(`Navigate failed: ${String(error.message || error)}`);
+          }
+        };
+
+        gotoButton.addEventListener("click", () => navigate(gotoInput.value));
+        gotoInput.addEventListener("keydown", (event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            navigate(gotoInput.value);
+          }
+        });
+        window.addEventListener("orientationchange", () => render(latest));
+        window.addEventListener("resize", () => render(latest));
+        document.addEventListener("visibilitychange", () => {
+          if (!document.hidden) fetchState({force: true});
+        });
+
+        fetchState({force: true});
+        pollTimer = setInterval(() => {
+          fetchState();
+        }, 1000);
+      })();
+    </script>
+  </body>
+</html>

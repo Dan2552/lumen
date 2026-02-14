@@ -31,7 +31,7 @@ use zip::ZipArchive;
 #[path = "file_controller/context/mod.rs"]
 mod context;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 struct FileEntry {
     name: String,
     path: String,
@@ -39,13 +39,49 @@ struct FileEntry {
     icon: &'static str,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Clone)]
 struct Column {
     title: String,
     path: String,
     sort_mode: String,
     entries: Vec<FileEntry>,
     selected_path: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct CompanionEntry {
+    pub name: String,
+    pub path: String,
+    pub is_dir: bool,
+    pub icon: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct CompanionColumn {
+    pub title: String,
+    pub path: String,
+    pub selected_path: String,
+    pub entries: Vec<CompanionEntry>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct CompanionTab {
+    pub id: String,
+    pub title: String,
+    pub is_active: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct CompanionSnapshot {
+    pub window_label: String,
+    pub home_path: String,
+    pub root_path: String,
+    pub active_path: String,
+    pub active_tab_id: String,
+    pub show_hidden: bool,
+    pub tabs: Vec<CompanionTab>,
+    pub columns: Vec<CompanionColumn>,
+    pub revision: String,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -2422,7 +2458,7 @@ fn run_fuzzy_search_worker(
     let mut ranked: Vec<(i64, SearchResultItem)> = Vec::new();
 
     while let Some(directory) = queue.pop_front() {
-            let entries = match fs::read_dir(&directory) {
+        let entries = match fs::read_dir(&directory) {
             Ok(entries) => entries,
             Err(_) => continue,
         };
@@ -2593,6 +2629,25 @@ fn saved_geometry_for_label<R: Runtime>(
 
 fn is_browser_window_label(label: &str) -> bool {
     label == "main" || label.starts_with("main-")
+}
+
+pub fn is_companion_window_label(label: &str) -> bool {
+    is_browser_window_label(label)
+}
+
+pub fn refresh_browser_window<R: Runtime>(app: &AppHandle<R>, window_label: &str) {
+    if !is_browser_window_label(window_label) {
+        return;
+    }
+    let Some(window) = app.get_webview_window(window_label) else {
+        return;
+    };
+    let _ = window.eval(
+        "(function(){\
+            if(!window.htmx){return;}\
+            window.htmx.ajax('GET','command/index',{target:'#main-root',swap:'outerHTML'});\
+        })();",
+    );
 }
 
 pub fn browser_window_count<R: Runtime>(app: &AppHandle<R>) -> usize {
@@ -2866,12 +2921,7 @@ fn active_tab_mut(model: &mut TabsModel) -> Option<&mut TabState> {
 
 fn settings_snapshot(
     state: &FileTabsState,
-) -> (
-    BTreeMap<String, DirectorySortMode>,
-    String,
-    String,
-    i32,
-) {
+) -> (BTreeMap<String, DirectorySortMode>, String, String, i32) {
     state
         .settings
         .lock()
@@ -2980,6 +3030,188 @@ fn render_view(
     render!("files/index", &context)
 }
 
+fn apply_navigate_to_model(model: &mut TabsModel, home: &Path, path: &str) {
+    let normalized = normalize_tab_path(home, Some(path));
+    if let Some(tab) = active_tab_mut(model) {
+        let root = active_tab_root_path(tab, home);
+        if normalized.starts_with(&root) {
+            tab.focus_path = Some(normalized.to_string_lossy().to_string());
+        }
+    }
+}
+
+fn companion_tabs(model: &TabsModel, home: &Path) -> Vec<CompanionTab> {
+    let mut root_basename_counts: HashMap<String, usize> = HashMap::new();
+    for tab in &model.tabs {
+        let root = active_tab_root_path(tab, home);
+        let key = label_from_path(&root);
+        *root_basename_counts.entry(key).or_insert(0) += 1;
+    }
+    model
+        .tabs
+        .iter()
+        .map(|tab| {
+            let root = active_tab_root_path(tab, home);
+            let basename = label_from_path(&root);
+            let disambiguate_root = root_basename_counts.get(&basename).copied().unwrap_or(0) > 1;
+            CompanionTab {
+                id: tab.id.to_string(),
+                title: tab_title(tab, home, disambiguate_root),
+                is_active: tab.id == model.active_id,
+            }
+        })
+        .collect()
+}
+
+fn companion_columns(columns: &[Column]) -> Vec<CompanionColumn> {
+    columns
+        .iter()
+        .map(|column| CompanionColumn {
+            title: column.title.clone(),
+            path: column.path.clone(),
+            selected_path: column.selected_path.clone(),
+            entries: column
+                .entries
+                .iter()
+                .map(|entry| CompanionEntry {
+                    name: entry.name.clone(),
+                    path: entry.path.clone(),
+                    is_dir: entry.is_dir,
+                    icon: entry.icon.to_string(),
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+fn companion_revision(
+    model: &TabsModel,
+    columns: &[Column],
+    active_root_path: &Path,
+    active_path: &str,
+    show_hidden: bool,
+) -> String {
+    let mut hasher = DefaultHasher::new();
+    model.active_id.hash(&mut hasher);
+    for tab in &model.tabs {
+        tab.id.hash(&mut hasher);
+        tab.root_path.hash(&mut hasher);
+        tab.focus_path.hash(&mut hasher);
+        tab.show_hidden.hash(&mut hasher);
+    }
+    active_root_path
+        .to_string_lossy()
+        .to_string()
+        .hash(&mut hasher);
+    active_path.hash(&mut hasher);
+    show_hidden.hash(&mut hasher);
+    for column in columns {
+        column.path.hash(&mut hasher);
+        column.selected_path.hash(&mut hasher);
+        for entry in &column.entries {
+            entry.path.hash(&mut hasher);
+            entry.name.hash(&mut hasher);
+            entry.is_dir.hash(&mut hasher);
+        }
+    }
+    format!("{:016x}", hasher.finish())
+}
+
+fn companion_snapshot_from_model(
+    model: &TabsModel,
+    state: &FileTabsState,
+    window_label: &str,
+) -> CompanionSnapshot {
+    let (directory_sorts, _, _, _) = settings_snapshot(state);
+    let home = home_directory();
+    let active_tab = model
+        .tabs
+        .iter()
+        .find(|tab| tab.id == model.active_id)
+        .or_else(|| model.tabs.first());
+    let active_root_path = active_tab
+        .map(|tab| active_tab_root_path(tab, &home))
+        .unwrap_or_else(|| home.clone());
+    let active_focus_path = active_tab
+        .and_then(|tab| tab.focus_path.clone())
+        .map(PathBuf::from)
+        .filter(|path| path.starts_with(&active_root_path));
+    let active_show_hidden = active_tab.map(|tab| tab.show_hidden).unwrap_or(false);
+    let columns = build_columns(
+        &active_root_path,
+        active_focus_path.as_deref(),
+        &directory_sorts,
+        active_show_hidden,
+    );
+    let active_path = active_focus_path
+        .as_ref()
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_else(|| active_root_path.to_string_lossy().to_string());
+    let active_tab_id = active_tab
+        .map(|tab| tab.id.to_string())
+        .unwrap_or_else(|| "1".to_string());
+    let revision = companion_revision(
+        model,
+        &columns,
+        &active_root_path,
+        &active_path,
+        active_show_hidden,
+    );
+
+    CompanionSnapshot {
+        window_label: window_label.to_string(),
+        home_path: home.to_string_lossy().to_string(),
+        root_path: active_root_path.to_string_lossy().to_string(),
+        active_path,
+        active_tab_id,
+        show_hidden: active_show_hidden,
+        tabs: companion_tabs(model, &home),
+        columns: companion_columns(&columns),
+        revision,
+    }
+}
+
+pub fn companion_snapshot(
+    state: &FileTabsState,
+    window_label: &str,
+) -> Result<CompanionSnapshot, String> {
+    let home = home_directory();
+    if !is_browser_window_label(window_label) {
+        return Err("unsupported window label".to_string());
+    }
+    let model = {
+        let mut store = state
+            .tabs
+            .lock()
+            .map_err(|_| "failed to lock tabs state".to_string())?;
+        ensure_window_tabs_model(&mut store, window_label, &home).clone()
+    };
+    Ok(companion_snapshot_from_model(&model, state, window_label))
+}
+
+pub fn companion_navigate(
+    state: &FileTabsState,
+    window_label: &str,
+    path: String,
+) -> Result<CompanionSnapshot, String> {
+    let home = home_directory();
+    if !is_browser_window_label(window_label) {
+        return Err("unsupported window label".to_string());
+    }
+    let model = {
+        let mut store = state
+            .tabs
+            .lock()
+            .map_err(|_| "failed to lock tabs state".to_string())?;
+        let model = ensure_window_tabs_model(&mut store, window_label, &home);
+        apply_navigate_to_model(model, &home, &path);
+        let next = model.clone();
+        persist_tabs_store(&store);
+        next
+    };
+    Ok(companion_snapshot_from_model(&model, state, window_label))
+}
+
 pub struct FileContextMenuState {
     pub pending: Mutex<Option<PendingContextTarget>>,
 }
@@ -3025,13 +3257,7 @@ pub fn navigate(window: Window, state: State<'_, FileTabsState>, path: String) -
     };
     let rendered = {
         let model = ensure_window_tabs_model(&mut store, &window_label, &home);
-        let normalized = normalize_tab_path(&home, Some(&path));
-        if let Some(tab) = active_tab_mut(model) {
-            let root = active_tab_root_path(tab, &home);
-            if normalized.starts_with(&root) {
-                tab.focus_path = Some(normalized.to_string_lossy().to_string());
-            }
-        }
+        apply_navigate_to_model(model, &home, &path);
 
         render_view_for_state(model, state.inner())
     };

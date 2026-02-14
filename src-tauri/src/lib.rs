@@ -1,5 +1,6 @@
 #[macro_use]
 mod templates;
+mod companion_server;
 mod controllers {
     pub mod file_controller;
 }
@@ -173,6 +174,9 @@ pub fn run() {
             file_controller::restore_saved_additional_windows(&app.handle());
             let _ = ensure_hold_window(&app.handle());
             update_hold_window_visibility(&app.handle());
+            if let Err(error) = companion_server::start(app.handle().clone()) {
+                eprintln!("lumen companion failed to start: {error}");
+            }
             Ok(())
         })
         .plugin(tauri_plugin_clipboard_manager::init())
