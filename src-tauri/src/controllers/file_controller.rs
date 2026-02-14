@@ -1,5 +1,11 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use flate2::read::GzDecoder;
+#[cfg(target_os = "macos")]
+use objc2::{msg_send, runtime::AnyObject};
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{NSWindow, NSWindowButton};
+#[cfg(target_os = "macos")]
+use objc2_foundation::{NSRect, NSString};
 use pulldown_cmark::{html, CowStr, Event, Options, Parser, Tag};
 use serde::Serialize;
 #[cfg(unix)]
@@ -16,17 +22,11 @@ use std::{
     time::UNIX_EPOCH,
 };
 use tauri::{
-    menu::MenuBuilder, AppHandle, LogicalPosition, Manager, Runtime, State, WebviewUrl,
+    menu::MenuBuilder, AppHandle, Emitter, LogicalPosition, Manager, Runtime, State, WebviewUrl,
     WebviewWindowBuilder, Window,
 };
 use tera::Context;
 use zip::ZipArchive;
-#[cfg(target_os = "macos")]
-use objc2::{msg_send, runtime::AnyObject};
-#[cfg(target_os = "macos")]
-use objc2_app_kit::{NSWindow, NSWindowButton};
-#[cfg(target_os = "macos")]
-use objc2_foundation::{NSRect, NSString};
 
 #[path = "file_controller/context/mod.rs"]
 mod context;
@@ -183,8 +183,6 @@ struct TabsModel {
     #[serde(default = "default_next_id")]
     next_id: u64,
     #[serde(default)]
-    directory_sorts: BTreeMap<String, DirectorySortMode>,
-    #[serde(default)]
     window: Option<WindowGeometry>,
 }
 
@@ -192,6 +190,41 @@ struct TabsModel {
 struct TabsStore {
     #[serde(default)]
     windows: BTreeMap<String, TabsModel>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct SettingsStore {
+    #[serde(default)]
+    directory_sorts: BTreeMap<String, DirectorySortMode>,
+    #[serde(default = "default_theme_base_color")]
+    theme_base_color: String,
+    #[serde(default = "default_theme_highlight_color")]
+    theme_highlight_color: String,
+    #[serde(default = "default_theme_lightness_offset")]
+    theme_lightness_offset: i32,
+}
+
+impl Default for SettingsStore {
+    fn default() -> Self {
+        Self {
+            directory_sorts: BTreeMap::new(),
+            theme_base_color: default_theme_base_color(),
+            theme_highlight_color: default_theme_highlight_color(),
+            theme_lightness_offset: default_theme_lightness_offset(),
+        }
+    }
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+struct LegacyTabsModelSettings {
+    #[serde(default)]
+    directory_sorts: BTreeMap<String, DirectorySortMode>,
+}
+
+#[derive(Debug, serde::Deserialize, Default)]
+struct LegacyTabsStoreSettings {
+    #[serde(default)]
+    windows: BTreeMap<String, LegacyTabsModelSettings>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -224,7 +257,6 @@ fn default_tabs_model() -> TabsModel {
         tabs: Vec::new(),
         active_id: default_active_id(),
         next_id: default_next_id(),
-        directory_sorts: BTreeMap::new(),
         window: None,
     }
 }
@@ -1962,16 +1994,139 @@ fn tabs_state_path() -> PathBuf {
     home_directory().join(".lumen").join("state.json")
 }
 
+fn settings_state_path() -> PathBuf {
+    home_directory().join(".lumen").join("settings.json")
+}
+
+fn default_theme_base_color() -> String {
+    "#444F66".to_string()
+}
+
+fn default_theme_highlight_color() -> String {
+    "#2F86E9".to_string()
+}
+
+fn default_theme_lightness_offset() -> i32 {
+    0
+}
+
+fn normalize_hex_color(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    let raw = trimmed.strip_prefix('#').unwrap_or(trimmed);
+    let expanded = match raw.len() {
+        3 => {
+            let mut output = String::with_capacity(6);
+            for ch in raw.chars() {
+                if !ch.is_ascii_hexdigit() {
+                    return None;
+                }
+                output.push(ch);
+                output.push(ch);
+            }
+            output
+        }
+        6 => {
+            if !raw.chars().all(|ch| ch.is_ascii_hexdigit()) {
+                return None;
+            }
+            raw.to_string()
+        }
+        _ => return None,
+    };
+    Some(format!("#{}", expanded.to_ascii_uppercase()))
+}
+
+fn normalize_directory_sorts(directory_sorts: &mut BTreeMap<String, DirectorySortMode>) {
+    directory_sorts.retain(|path, mode| {
+        PathBuf::from(path).is_absolute() && *mode != DirectorySortMode::Alphabetical
+    });
+}
+
+fn normalize_theme_base_color(theme_base_color: &mut String) {
+    if let Some(normalized) = normalize_hex_color(theme_base_color) {
+        *theme_base_color = normalized;
+    } else {
+        *theme_base_color = default_theme_base_color();
+    }
+}
+
+fn normalize_theme_highlight_color(theme_highlight_color: &mut String) {
+    if let Some(normalized) = normalize_hex_color(theme_highlight_color) {
+        *theme_highlight_color = normalized;
+    } else {
+        *theme_highlight_color = default_theme_highlight_color();
+    }
+}
+
+fn normalize_theme_lightness_offset(theme_lightness_offset: &mut i32) {
+    *theme_lightness_offset = (*theme_lightness_offset).clamp(-40, 40);
+}
+
+fn normalize_settings_store(settings: &mut SettingsStore) {
+    normalize_directory_sorts(&mut settings.directory_sorts);
+    normalize_theme_base_color(&mut settings.theme_base_color);
+    normalize_theme_highlight_color(&mut settings.theme_highlight_color);
+    normalize_theme_lightness_offset(&mut settings.theme_lightness_offset);
+}
+
+fn legacy_directory_sorts_from_tabs_state() -> BTreeMap<String, DirectorySortMode> {
+    let raw = match fs::read_to_string(tabs_state_path()) {
+        Ok(raw) => raw,
+        Err(_) => return BTreeMap::new(),
+    };
+    let mut directory_sorts = BTreeMap::new();
+    if let Ok(store) = serde_json::from_str::<LegacyTabsStoreSettings>(&raw) {
+        for model in store.windows.values() {
+            directory_sorts.extend(model.directory_sorts.clone());
+        }
+    }
+    if directory_sorts.is_empty() {
+        if let Ok(model) = serde_json::from_str::<LegacyTabsModelSettings>(&raw) {
+            directory_sorts.extend(model.directory_sorts);
+        }
+    }
+    normalize_directory_sorts(&mut directory_sorts);
+    directory_sorts
+}
+
 fn load_tabs_store_from_disk() -> Option<TabsStore> {
     let path = tabs_state_path();
     let raw = fs::read_to_string(path).ok()?;
     if let Ok(store) = serde_json::from_str::<TabsStore>(&raw) {
-        return Some(store);
+        if !store.windows.is_empty() {
+            return Some(store);
+        }
     }
     let legacy = serde_json::from_str::<TabsModel>(&raw).ok()?;
     let mut windows = BTreeMap::new();
     windows.insert("main".to_string(), legacy);
     Some(TabsStore { windows })
+}
+
+fn load_settings_store_from_disk() -> Option<SettingsStore> {
+    let path = settings_state_path();
+    let raw = fs::read_to_string(path).ok()?;
+    let mut value = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
+    if let Some(object) = value.as_object_mut() {
+        let has_highlight_color = object
+            .get("theme_highlight_color")
+            .and_then(|value| value.as_str())
+            .and_then(normalize_hex_color)
+            .is_some();
+        if !has_highlight_color {
+            if let Some(base_color) = object
+                .get("theme_base_color")
+                .and_then(|value| value.as_str())
+                .and_then(normalize_hex_color)
+            {
+                object.insert(
+                    "theme_highlight_color".to_string(),
+                    serde_json::Value::String(base_color),
+                );
+            }
+        }
+    }
+    serde_json::from_value::<SettingsStore>(value).ok()
 }
 
 fn persist_tabs_store(store: &TabsStore) {
@@ -2001,8 +2156,36 @@ fn persist_tabs_store(store: &TabsStore) {
     let _ = fs::rename(tmp_path, path);
 }
 
+fn persist_settings_store(store: &SettingsStore) {
+    let path = settings_state_path();
+    if let Some(parent) = path.parent() {
+        if fs::create_dir_all(parent).is_err() {
+            return;
+        }
+    }
+
+    let Ok(json) = serde_json::to_vec_pretty(store) else {
+        return;
+    };
+    if let Ok(existing) = fs::read(&path) {
+        if existing == json {
+            return;
+        }
+    }
+    let tmp_path = path.with_extension("json.tmp");
+    let Ok(mut file) = fs::File::create(&tmp_path) else {
+        return;
+    };
+    if file.write_all(&json).is_err() || file.flush().is_err() {
+        let _ = fs::remove_file(&tmp_path);
+        return;
+    }
+    let _ = fs::rename(tmp_path, path);
+}
+
 pub struct FileTabsState {
     tabs: Mutex<TabsStore>,
+    settings: Mutex<SettingsStore>,
 }
 
 impl Default for FileTabsState {
@@ -2029,8 +2212,20 @@ impl Default for FileTabsState {
         for model in store.windows.values_mut() {
             ensure_tabs(model, &home);
         }
+        let loaded_settings = load_settings_store_from_disk();
+        let should_migrate_settings = loaded_settings.is_none();
+        let mut settings = loaded_settings.unwrap_or_default();
+        normalize_settings_store(&mut settings);
+        if should_migrate_settings && settings.directory_sorts.is_empty() {
+            settings.directory_sorts = legacy_directory_sorts_from_tabs_state();
+            normalize_settings_store(&mut settings);
+            if !settings.directory_sorts.is_empty() {
+                persist_settings_store(&settings);
+            }
+        }
         Self {
             tabs: Mutex::new(store),
+            settings: Mutex::new(settings),
         }
     }
 }
@@ -2293,10 +2488,6 @@ fn search_model_mut<'a>(
 }
 
 fn ensure_tabs(model: &mut TabsModel, home: &Path) {
-    model.directory_sorts.retain(|path, mode| {
-        PathBuf::from(path).is_absolute() && *mode != DirectorySortMode::Alphabetical
-    });
-
     for tab in &mut model.tabs {
         if let Some(root) = tab.root_path.clone() {
             let normalized = normalize_tab_path(home, Some(&root));
@@ -2452,6 +2643,27 @@ pub fn open_new_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     Ok(())
 }
 
+pub fn open_appearance_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    let label = "appearance-settings";
+    if let Some(window) = app.get_webview_window(label) {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+
+    let builder = WebviewWindowBuilder::new(app, label, WebviewUrl::App("appearance.html".into()))
+        .title("Settings")
+        .inner_size(440.0, 220.0)
+        .min_inner_size(420.0, 200.0)
+        .decorations(true)
+        .resizable(false)
+        .accept_first_mouse(true);
+    let window = builder.build().map_err(|error| error.to_string())?;
+    let _ = window.set_focus();
+    Ok(())
+}
+
 fn ensure_browser_window<R: Runtime>(
     app: &AppHandle<R>,
     window_label: &str,
@@ -2460,9 +2672,10 @@ fn ensure_browser_window<R: Runtime>(
         return Ok(window);
     }
     let saved_geometry = saved_geometry_for_label(app, window_label);
-    let mut builder = WebviewWindowBuilder::new(app, window_label, WebviewUrl::App("index.html".into()))
-        .title("Lumen")
-        .inner_size(800.0, 680.0);
+    let mut builder =
+        WebviewWindowBuilder::new(app, window_label, WebviewUrl::App("index.html".into()))
+            .title("Lumen")
+            .inner_size(800.0, 680.0);
     if let Some(geometry) = saved_geometry {
         builder = builder
             .inner_size(geometry.width as f64, geometry.height as f64)
@@ -2472,7 +2685,10 @@ fn ensure_browser_window<R: Runtime>(
     {
         builder = builder
             .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .traffic_light_position(LogicalPosition::new(MAC_TRAFFIC_LIGHT_X, MAC_TRAFFIC_LIGHT_Y))
+            .traffic_light_position(LogicalPosition::new(
+                MAC_TRAFFIC_LIGHT_X,
+                MAC_TRAFFIC_LIGHT_Y,
+            ))
             .hidden_title(true);
     }
     let window = builder.build()?;
@@ -2493,9 +2709,8 @@ unsafe fn layout_window_traffic_lights(
 
     let close_button: *mut AnyObject =
         unsafe { msg_send![ns_window, standardWindowButton: NSWindowButton::CloseButton] };
-    let minimize_button: *mut AnyObject = unsafe {
-        msg_send![ns_window, standardWindowButton: NSWindowButton::MiniaturizeButton]
-    };
+    let minimize_button: *mut AnyObject =
+        unsafe { msg_send![ns_window, standardWindowButton: NSWindowButton::MiniaturizeButton] };
     let zoom_button: *mut AnyObject =
         unsafe { msg_send![ns_window, standardWindowButton: NSWindowButton::ZoomButton] };
     if close_button.is_null() || minimize_button.is_null() || zoom_button.is_null() {
@@ -2520,7 +2735,10 @@ unsafe fn layout_window_traffic_lights(
     titlebar_frame.origin.y = window_frame.size.height - titlebar_frame.size.height;
     let _: () = unsafe { msg_send![titlebar_container, setFrame: titlebar_frame] };
 
-    for (index, button) in [close_button, minimize_button, zoom_button].iter().enumerate() {
+    for (index, button) in [close_button, minimize_button, zoom_button]
+        .iter()
+        .enumerate()
+    {
         let mut frame: NSRect = unsafe { msg_send![*button, frame] };
         frame.origin.x = x + (index as f64 * space_between);
         frame.origin.y = (titlebar_frame.size.height - frame.size.height) / 2.0;
@@ -2587,7 +2805,9 @@ pub fn set_window_title(window: Window, title: String) -> Result<(), String> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        window.set_title(&title).map_err(|error| error.to_string())?;
+        window
+            .set_title(&title)
+            .map_err(|error| error.to_string())?;
         Ok(())
     }
 }
@@ -2620,7 +2840,54 @@ fn active_tab_mut(model: &mut TabsModel) -> Option<&mut TabState> {
     model.tabs.get_mut(index)
 }
 
-fn render_view(model: &TabsModel) -> String {
+fn settings_snapshot(
+    state: &FileTabsState,
+) -> (
+    BTreeMap<String, DirectorySortMode>,
+    String,
+    String,
+    i32,
+) {
+    state
+        .settings
+        .lock()
+        .map(|settings| {
+            (
+                settings.directory_sorts.clone(),
+                settings.theme_base_color.clone(),
+                settings.theme_highlight_color.clone(),
+                settings.theme_lightness_offset,
+            )
+        })
+        .unwrap_or_else(|_| {
+            (
+                BTreeMap::new(),
+                default_theme_base_color(),
+                default_theme_highlight_color(),
+                default_theme_lightness_offset(),
+            )
+        })
+}
+
+fn render_view_for_state(model: &TabsModel, state: &FileTabsState) -> String {
+    let (directory_sorts, theme_base_color, theme_highlight_color, theme_lightness_offset) =
+        settings_snapshot(state);
+    render_view(
+        model,
+        &directory_sorts,
+        &theme_base_color,
+        &theme_highlight_color,
+        theme_lightness_offset,
+    )
+}
+
+fn render_view(
+    model: &TabsModel,
+    directory_sorts: &BTreeMap<String, DirectorySortMode>,
+    theme_base_color: &str,
+    theme_highlight_color: &str,
+    theme_lightness_offset: i32,
+) -> String {
     let mut context = Context::new();
     let home = home_directory();
     let active_tab = model
@@ -2641,7 +2908,7 @@ fn render_view(model: &TabsModel) -> String {
     let columns = build_columns(
         &active_root_path,
         active_focus_path.as_deref(),
-        &model.directory_sorts,
+        directory_sorts,
         active_show_hidden,
     );
     let preview = build_preview(active_focus_path.as_deref());
@@ -2681,6 +2948,9 @@ fn render_view(model: &TabsModel) -> String {
     context.insert("active_path", &active_path_for_new);
     context.insert("active_tab_id", &model.active_id.to_string());
     context.insert("preview", &preview);
+    context.insert("theme_base_color", theme_base_color);
+    context.insert("theme_highlight_color", theme_highlight_color);
+    context.insert("theme_lightness_offset", &theme_lightness_offset);
 
     // context.insert("user_needs_to_setup_biometrics", &user_needs_to_setup_biometrics);
     render!("files/index", &context)
@@ -2715,7 +2985,7 @@ pub fn index(window: Window, state: State<'_, FileTabsState>) -> String {
     };
     let rendered = {
         let model = ensure_window_tabs_model(&mut store, &window_label, &home);
-        render_view(model)
+        render_view_for_state(model, state.inner())
     };
     persist_tabs_store(&store);
     rendered
@@ -2739,7 +3009,7 @@ pub fn navigate(window: Window, state: State<'_, FileTabsState>, path: String) -
             }
         }
 
-        render_view(model)
+        render_view_for_state(model, state.inner())
     };
 
     persist_tabs_store(&store);
@@ -2814,6 +3084,11 @@ pub fn new_window(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn open_appearance_window_command(app: AppHandle) -> Result<(), String> {
+    open_appearance_window(&app)
+}
+
+#[tauri::command]
 pub fn go_to_location(
     window: Window,
     state: State<'_, FileTabsState>,
@@ -2843,7 +3118,7 @@ pub fn go_to_location(
             }
         }
 
-        render_view(model)
+        render_view_for_state(model, state.inner())
     };
     persist_tabs_store(&store);
     Ok(rendered)
@@ -2865,7 +3140,7 @@ pub fn activate_tab(window: Window, state: State<'_, FileTabsState>, tab_id: Str
             }
         }
 
-        render_view(model)
+        render_view_for_state(model, state.inner())
     };
     persist_tabs_store(&store);
     rendered
@@ -2890,7 +3165,7 @@ pub fn new_tab(window: Window, state: State<'_, FileTabsState>, _path: String) -
             show_hidden: false,
         });
         model.active_id = id;
-        render_view(model)
+        render_view_for_state(model, state.inner())
     };
     persist_tabs_store(&store);
     rendered
@@ -2928,7 +3203,7 @@ pub fn close_tab(window: Window, state: State<'_, FileTabsState>, tab_id: String
         if let Ok(parsed_id) = tab_id.parse::<u64>() {
             close_tab_in_model(model, parsed_id);
         }
-        render_view(model)
+        render_view_for_state(model, state.inner())
     };
 
     persist_tabs_store(&store);
@@ -2959,7 +3234,7 @@ pub fn close_tab_or_window(
         let model = ensure_window_tabs_model(&mut store, &window_label, &home);
         let active_id = model.active_id;
         close_tab_in_model(model, active_id);
-        render_view(model)
+        render_view_for_state(model, state.inner())
     };
     persist_tabs_store(&store);
     Ok(rendered)
@@ -2995,7 +3270,7 @@ pub fn reorder_tabs(window: Window, state: State<'_, FileTabsState>, tab_ids: St
                 model.active_id = model.tabs.first().map(|tab| tab.id).unwrap_or(1);
             }
         }
-        render_view(model)
+        render_view_for_state(model, state.inner())
     };
     persist_tabs_store(&store);
     rendered
@@ -3032,7 +3307,7 @@ pub fn drop_files_into_directory(
                 tab.focus_path = Some(target.to_string_lossy().to_string());
             }
         }
-        render_view(model)
+        render_view_for_state(model, state.inner())
     };
     persist_tabs_store(&store);
     Ok(rendered)
@@ -3188,7 +3463,7 @@ pub fn rename_path(
     let rendered = {
         let model = ensure_window_tabs_model(&mut store, &window_label, &home);
         set_active_focus_after_path_change(model, &home, Some(&destination), &source);
-        render_view(model)
+        render_view_for_state(model, state.inner())
     };
     persist_tabs_store(&store);
     Ok(rendered)
@@ -3218,7 +3493,7 @@ pub fn trash_path(
     let rendered = {
         let model = ensure_window_tabs_model(&mut store, &window_label, &home);
         set_active_focus_after_path_change(model, &home, None, &source);
-        render_view(model)
+        render_view_for_state(model, state.inner())
     };
     persist_tabs_store(&store);
     Ok(rendered)
@@ -3339,7 +3614,7 @@ pub fn trash_paths(
             move_to_trash(&source)?;
             set_active_focus_after_path_change(model, &home, None, &source);
         }
-        render_view(model)
+        render_view_for_state(model, state.inner())
     };
     persist_tabs_store(&store);
     Ok(rendered)
@@ -3369,7 +3644,7 @@ pub fn delete_path(
     let rendered = {
         let model = ensure_window_tabs_model(&mut store, &window_label, &home);
         set_active_focus_after_path_change(model, &home, None, &source);
-        render_view(model)
+        render_view_for_state(model, state.inner())
     };
     persist_tabs_store(&store);
     Ok(rendered)
@@ -3402,7 +3677,7 @@ pub fn delete_paths(
             remove_permanently(&source)?;
             set_active_focus_after_path_change(model, &home, None, &source);
         }
-        render_view(model)
+        render_view_for_state(model, state.inner())
     };
     persist_tabs_store(&store);
     Ok(rendered)
@@ -3435,7 +3710,7 @@ pub fn create_directory(
     let rendered = {
         let model = ensure_window_tabs_model(&mut store, &window_label, &home);
         set_active_focus_after_path_change(model, &home, Some(&target), &parent);
-        render_view(model)
+        render_view_for_state(model, state.inner())
     };
     persist_tabs_store(&store);
     Ok(rendered)
@@ -3468,7 +3743,7 @@ pub fn create_file(
     let rendered = {
         let model = ensure_window_tabs_model(&mut store, &window_label, &home);
         set_active_focus_after_path_change(model, &home, Some(&target), &parent);
-        render_view(model)
+        render_view_for_state(model, state.inner())
     };
     persist_tabs_store(&store);
     Ok(rendered)
@@ -3494,19 +3769,122 @@ pub fn set_directory_sort(
     }
     let parsed_mode =
         DirectorySortMode::from_input(&mode).ok_or_else(|| "invalid sort mode".to_string())?;
+    let mut settings = state
+        .settings
+        .lock()
+        .map_err(|_| "failed to lock settings state".to_string())?;
     let rendered = {
         let model = ensure_window_tabs_model(&mut store, &window_label, &home);
         let key = directory.to_string_lossy().to_string();
         if parsed_mode == DirectorySortMode::Alphabetical {
-            model.directory_sorts.remove(&key);
+            settings.directory_sorts.remove(&key);
         } else {
-            model.directory_sorts.insert(key, parsed_mode);
+            settings.directory_sorts.insert(key, parsed_mode);
         }
-        render_view(model)
+        normalize_settings_store(&mut settings);
+        render_view(
+            model,
+            &settings.directory_sorts,
+            &settings.theme_base_color,
+            &settings.theme_highlight_color,
+            settings.theme_lightness_offset,
+        )
     };
 
     persist_tabs_store(&store);
+    persist_settings_store(&settings);
     Ok(rendered)
+}
+
+#[tauri::command]
+pub fn get_theme_base_color(state: State<'_, FileTabsState>) -> String {
+    state
+        .settings
+        .lock()
+        .map(|settings| settings.theme_base_color.clone())
+        .unwrap_or_else(|_| default_theme_base_color())
+}
+
+#[tauri::command]
+pub fn set_theme_base_color(
+    app: AppHandle,
+    state: State<'_, FileTabsState>,
+    color: String,
+) -> Result<String, String> {
+    let normalized = normalize_hex_color(&color)
+        .ok_or_else(|| "invalid color, expected #RRGGBB or #RGB".to_string())?;
+    let mut settings = state
+        .settings
+        .lock()
+        .map_err(|_| "failed to lock settings state".to_string())?;
+    settings.theme_base_color = normalized.clone();
+    normalize_settings_store(&mut settings);
+    persist_settings_store(&settings);
+    let _ = app.emit(
+        "theme-base-color-changed",
+        settings.theme_base_color.clone(),
+    );
+    Ok(settings.theme_base_color.clone())
+}
+
+#[tauri::command]
+pub fn get_theme_highlight_color(state: State<'_, FileTabsState>) -> String {
+    state
+        .settings
+        .lock()
+        .map(|settings| settings.theme_highlight_color.clone())
+        .unwrap_or_else(|_| default_theme_highlight_color())
+}
+
+#[tauri::command]
+pub fn set_theme_highlight_color(
+    app: AppHandle,
+    state: State<'_, FileTabsState>,
+    color: String,
+) -> Result<String, String> {
+    let normalized = normalize_hex_color(&color)
+        .ok_or_else(|| "invalid color, expected #RRGGBB or #RGB".to_string())?;
+    let mut settings = state
+        .settings
+        .lock()
+        .map_err(|_| "failed to lock settings state".to_string())?;
+    settings.theme_highlight_color = normalized.clone();
+    normalize_settings_store(&mut settings);
+    persist_settings_store(&settings);
+    let _ = app.emit(
+        "theme-highlight-color-changed",
+        settings.theme_highlight_color.clone(),
+    );
+    Ok(settings.theme_highlight_color.clone())
+}
+
+#[tauri::command]
+pub fn get_theme_lightness_offset(state: State<'_, FileTabsState>) -> i32 {
+    state
+        .settings
+        .lock()
+        .map(|settings| settings.theme_lightness_offset)
+        .unwrap_or_else(|_| default_theme_lightness_offset())
+}
+
+#[tauri::command]
+pub fn set_theme_lightness_offset(
+    app: AppHandle,
+    state: State<'_, FileTabsState>,
+    offset: i32,
+) -> Result<i32, String> {
+    let mut settings = state
+        .settings
+        .lock()
+        .map_err(|_| "failed to lock settings state".to_string())?;
+    settings.theme_lightness_offset = offset;
+    normalize_settings_store(&mut settings);
+    persist_settings_store(&settings);
+    let _ = app.emit(
+        "theme-lightness-offset-changed",
+        settings.theme_lightness_offset,
+    );
+    Ok(settings.theme_lightness_offset)
 }
 
 #[tauri::command]
@@ -3533,7 +3911,7 @@ pub fn set_tab_show_hidden(
         if let Some(tab) = active_tab_mut(model) {
             tab.show_hidden = parsed;
         }
-        render_view(model)
+        render_view_for_state(model, state.inner())
     };
     persist_tabs_store(&store);
     Ok(rendered)
@@ -4062,7 +4440,7 @@ pub fn set_tab_root(
                 }
             }
         }
-        render_view(model)
+        render_view_for_state(model, state.inner())
     };
     persist_tabs_store(&store);
     Ok(rendered)

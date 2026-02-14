@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Settings</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+
+      html,
+      body {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        font-family: "SF Pro Text", "SF Pro Display", "Segoe UI", sans-serif;
+        background: #2b313f;
+        color: #c2c9d6;
+      }
+
+      .shell {
+        box-sizing: border-box;
+        width: 100%;
+        min-height: 100%;
+        padding: 20px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 600;
+        color: #f4f7ff;
+      }
+
+      .sub {
+        margin-top: 4px;
+        font-size: 12px;
+        color: #97a1b6;
+      }
+
+      .row {
+        margin-top: 12px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .label {
+        width: 84px;
+        font-size: 11px;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        color: #97a1b6;
+        flex-shrink: 0;
+      }
+
+      .picker {
+        width: 46px;
+        height: 32px;
+        border-radius: 7px;
+        border: 1px solid #4b5364;
+        background: #1a1f29;
+        padding: 2px;
+        box-sizing: border-box;
+        cursor: default;
+      }
+
+      .hex {
+        width: 100%;
+        height: 32px;
+        border-radius: 8px;
+        border: 1px solid #4b5364;
+        background: #1a1f29;
+        color: #f4f7ff;
+        padding: 0 10px;
+        box-sizing: border-box;
+        font-family: "SF Mono", "Menlo", "Consolas", monospace;
+        text-transform: uppercase;
+        outline: none;
+      }
+
+      .hex:focus {
+        border-color: #2f86e9;
+        box-shadow: 0 0 0 1px rgba(47, 134, 233, 0.55);
+      }
+
+      button {
+        min-width: 84px;
+        height: 30px;
+        border-radius: 7px;
+        border: 1px solid #4b5364;
+        background: #3a4254;
+        color: #c2c9d6;
+        font: inherit;
+        font-size: 12px;
+        cursor: default;
+      }
+
+      .row-reset {
+        min-width: 64px;
+      }
+
+      .status {
+        margin-top: 14px;
+        min-height: 16px;
+        font-size: 11px;
+        color: #97a1b6;
+      }
+
+      .status.error {
+        color: #ffb8bf;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <h1>Settings</h1>
+      <div class="sub">Appearance changes apply instantly to all windows.</div>
+
+      <div class="row">
+        <label class="label" for="background-color">Background</label>
+        <input id="background-color" class="picker" type="color" value="#444F66" />
+        <input
+          id="background-hex"
+          class="hex"
+          type="text"
+          value="#444F66"
+          maxlength="7"
+          spellcheck="false"
+          autocorrect="off"
+          autocapitalize="off"
+          autocomplete="off"
+        />
+        <button id="reset-background" class="row-reset" type="button">Reset</button>
+      </div>
+
+      <div class="row">
+        <label class="label" for="highlight-color">Highlight</label>
+        <input id="highlight-color" class="picker" type="color" value="#2F86E9" />
+        <input
+          id="highlight-hex"
+          class="hex"
+          type="text"
+          value="#2F86E9"
+          maxlength="7"
+          spellcheck="false"
+          autocorrect="off"
+          autocapitalize="off"
+          autocomplete="off"
+        />
+        <button id="reset-highlight" class="row-reset" type="button">Reset</button>
+      </div>
+      <div id="status" class="status"></div>
+    </div>
+
+    <script>
+      (() => {
+        const invoke = window.__TAURI__?.core?.invoke;
+        const tauriListen = window.__TAURI__?.event?.listen;
+        const defaultBaseColor = "#444F66";
+        const defaultHighlightColor = "#2F86E9";
+        const backgroundColor = document.getElementById("background-color");
+        const backgroundHex = document.getElementById("background-hex");
+        const resetBackgroundButton = document.getElementById("reset-background");
+        const highlightColor = document.getElementById("highlight-color");
+        const highlightHex = document.getElementById("highlight-hex");
+        const resetHighlightButton = document.getElementById("reset-highlight");
+        const status = document.getElementById("status");
+        let currentBase = defaultBaseColor;
+        let currentHighlight = defaultHighlightColor;
+
+        const clampChannel = (value) => Math.max(0, Math.min(255, Number(value) || 0));
+        const hexToRgb = (value) => {
+          const raw = String(value || "").trim().replace(/^#/, "");
+          if (raw.length === 3 && /^[0-9a-fA-F]{3}$/.test(raw)) {
+            return {
+              r: parseInt(raw[0] + raw[0], 16),
+              g: parseInt(raw[1] + raw[1], 16),
+              b: parseInt(raw[2] + raw[2], 16),
+            };
+          }
+          if (raw.length === 6 && /^[0-9a-fA-F]{6}$/.test(raw)) {
+            return {
+              r: parseInt(raw.slice(0, 2), 16),
+              g: parseInt(raw.slice(2, 4), 16),
+              b: parseInt(raw.slice(4, 6), 16),
+            };
+          }
+          return null;
+        };
+        const rgbToHex = (rgb) => {
+          const toHex = (channel) => clampChannel(channel).toString(16).padStart(2, "0").toUpperCase();
+          return `#${toHex(rgb.r)}${toHex(rgb.g)}${toHex(rgb.b)}`;
+        };
+        const normalizeHexColor = (value) => {
+          const parsed = hexToRgb(value);
+          return parsed ? rgbToHex(parsed) : null;
+        };
+        const setStatus = (message, kind = "") => {
+          if (!status) return;
+          status.textContent = String(message || "");
+          status.classList.toggle("error", kind === "error");
+        };
+        const syncControls = (base, highlight) => {
+          const normalizedBase = normalizeHexColor(base) || defaultBaseColor;
+          const normalizedHighlight = normalizeHexColor(highlight) || defaultHighlightColor;
+          currentBase = normalizedBase;
+          currentHighlight = normalizedHighlight;
+          if (backgroundColor) backgroundColor.value = normalizedBase;
+          if (backgroundHex) backgroundHex.value = normalizedBase;
+          if (highlightColor) highlightColor.value = normalizedHighlight;
+          if (highlightHex) highlightHex.value = normalizedHighlight;
+        };
+        const readBaseFromControls = (preferred = "hex") => {
+          const fromHex = normalizeHexColor(backgroundHex?.value || "");
+          const fromPicker = normalizeHexColor(backgroundColor?.value || "");
+          if (preferred === "picker") return fromPicker || fromHex || currentBase || defaultBaseColor;
+          return fromHex || fromPicker || currentBase || defaultBaseColor;
+        };
+        const readHighlightFromControls = (preferred = "hex") => {
+          const fromHex = normalizeHexColor(highlightHex?.value || "");
+          const fromPicker = normalizeHexColor(highlightColor?.value || "");
+          if (preferred === "picker") return fromPicker || fromHex || currentHighlight || defaultHighlightColor;
+          return fromHex || fromPicker || currentHighlight || defaultHighlightColor;
+        };
+        const persistColors = async (base, highlight) => {
+          if (typeof invoke !== "function") return false;
+          const normalizedBase = normalizeHexColor(base);
+          const normalizedHighlight = normalizeHexColor(highlight);
+          if (!normalizedBase || !normalizedHighlight) return false;
+          try {
+            const [savedBase, savedHighlight] = await Promise.all([
+              invoke("set_theme_base_color", {color: normalizedBase}),
+              invoke("set_theme_highlight_color", {color: normalizedHighlight}),
+            ]);
+            syncControls(savedBase || normalizedBase, savedHighlight || normalizedHighlight);
+            setStatus("");
+            return true;
+          } catch (error) {
+            setStatus(String(error || "Failed to update appearance."), "error");
+            return false;
+          }
+        };
+        const applyFromControls = async (preferred = "hex") => {
+          const base = readBaseFromControls(preferred);
+          const highlight = readHighlightFromControls(preferred);
+          await persistColors(base, highlight);
+        };
+
+        if (backgroundColor) {
+          backgroundColor.addEventListener("input", () => {
+            if (backgroundHex) backgroundHex.value = backgroundColor.value;
+            void applyFromControls("picker");
+          });
+          backgroundColor.addEventListener("change", () => {
+            if (backgroundHex) backgroundHex.value = backgroundColor.value;
+            void applyFromControls("picker");
+          });
+        }
+        if (highlightColor) {
+          highlightColor.addEventListener("input", () => {
+            if (highlightHex) highlightHex.value = highlightColor.value;
+            void applyFromControls("picker");
+          });
+          highlightColor.addEventListener("change", () => {
+            if (highlightHex) highlightHex.value = highlightColor.value;
+            void applyFromControls("picker");
+          });
+        }
+        if (backgroundHex) {
+          backgroundHex.addEventListener("input", () => {
+            const normalized = normalizeHexColor(backgroundHex.value || "");
+            if (normalized && backgroundColor) backgroundColor.value = normalized;
+            if (normalized) void applyFromControls("hex");
+          });
+        }
+        if (highlightHex) {
+          highlightHex.addEventListener("input", () => {
+            const normalized = normalizeHexColor(highlightHex.value || "");
+            if (normalized && highlightColor) highlightColor.value = normalized;
+            if (normalized) void applyFromControls("hex");
+          });
+        }
+        if (resetBackgroundButton) {
+          resetBackgroundButton.addEventListener("click", () => {
+            void persistColors(defaultBaseColor, readHighlightFromControls("hex"));
+          });
+        }
+        if (resetHighlightButton) {
+          resetHighlightButton.addEventListener("click", () => {
+            void persistColors(readBaseFromControls("hex"), defaultHighlightColor);
+          });
+        }
+
+        if (typeof tauriListen === "function") {
+          Promise.resolve(
+            tauriListen("theme-base-color-changed", (event) => {
+              const normalized = normalizeHexColor(String(event?.payload || ""));
+              if (!normalized) return;
+              syncControls(normalized, currentHighlight);
+            }),
+          ).catch(() => {});
+          Promise.resolve(
+            tauriListen("theme-highlight-color-changed", (event) => {
+              const normalized = normalizeHexColor(String(event?.payload || ""));
+              if (!normalized) return;
+              syncControls(currentBase, normalized);
+            }),
+          ).catch(() => {});
+        }
+
+        const initialize = async () => {
+          if (typeof invoke !== "function") return;
+          try {
+            const [base, highlight] = await Promise.all([
+              invoke("get_theme_base_color"),
+              invoke("get_theme_highlight_color"),
+            ]);
+            const normalizedBase = normalizeHexColor(String(base || "")) || defaultBaseColor;
+            const normalizedHighlight = normalizeHexColor(String(highlight || "")) || defaultHighlightColor;
+            syncControls(normalizedBase, normalizedHighlight);
+          } catch (error) {
+            setStatus(String(error || "Failed to load appearance settings."), "error");
+          }
+        };
+        void initialize();
+      })();
+    </script>
+  </body>
+</html>

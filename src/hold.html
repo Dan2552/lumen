@@ -7,6 +7,14 @@
     <link rel="stylesheet" href="/lucide/font/lucide.css" />
     <style>
       :root {
+        --accent-600: #1f5fbf;
+        --accent-500: #2f86e9;
+        --accent-250: #c7dafc;
+        --accent-175: #d9e6ff;
+        --accent-150: #dce9ff;
+        --accent-050: #f3f6ff;
+        --accent-overlay-soft: rgba(48, 74, 120, 0.4);
+        --accent-border-soft: rgba(118, 167, 255, 0.6);
         color-scheme: dark;
       }
 
@@ -34,15 +42,15 @@
       }
 
       .shell.has-items {
-        border-color: #2f86e9;
-        background: #1f5fbf;
+        border-color: var(--accent-500);
+        background: var(--accent-600);
       }
 
       .drop-area {
         width: 100%;
         height: 100%;
         background: transparent;
-        color: #f3f6ff;
+        color: var(--accent-050);
         display: flex;
         align-items: center;
         gap: 10px;
@@ -53,14 +61,14 @@
       }
 
       .drop-area.is-over {
-        background: rgba(48, 74, 120, 0.4);
-        box-shadow: inset 0 0 0 1px rgba(118, 167, 255, 0.6);
+        background: var(--accent-overlay-soft);
+        box-shadow: inset 0 0 0 1px var(--accent-border-soft);
       }
 
       .title {
         font-size: 12px;
         font-weight: 600;
-        color: #f3f6ff;
+        color: var(--accent-050);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -75,7 +83,7 @@
         height: 100%;
         border: none;
         background: transparent;
-        color: #f3f6ff;
+        color: var(--accent-050);
         box-sizing: border-box;
         cursor: default;
         user-select: none;
@@ -100,7 +108,7 @@
 
       .row-icon {
         width: 16px;
-        color: #d9e6ff;
+        color: var(--accent-175);
         text-align: center;
         flex-shrink: 0;
         font-size: 14px;
@@ -115,7 +123,7 @@
         min-width: 0;
         font-size: 12px;
         font-weight: 600;
-        color: #edf3ff;
+        color: var(--accent-050);
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -125,7 +133,7 @@
 
       .count {
         font-size: 11px;
-        color: #dce9ff;
+        color: var(--accent-150);
         flex-shrink: 0;
         user-select: none;
         -webkit-user-select: none;
@@ -134,7 +142,7 @@
       .clear {
         border: none;
         background: transparent;
-        color: #dce9ff;
+        color: var(--accent-150);
         font-size: 12px;
         line-height: 1;
         cursor: default;
@@ -175,6 +183,78 @@
         const startDrag = window.__TAURI__?.drag?.startDrag;
         let heldPaths = [];
         const dragIconCache = new Map();
+        const clampChannel = (value) => Math.max(0, Math.min(255, Number(value) || 0));
+        const hexToRgb = (value) => {
+          const raw = String(value || "").trim().replace(/^#/, "");
+          if (raw.length === 3 && /^[0-9a-fA-F]{3}$/.test(raw)) {
+            return {
+              r: parseInt(raw[0] + raw[0], 16),
+              g: parseInt(raw[1] + raw[1], 16),
+              b: parseInt(raw[2] + raw[2], 16),
+            };
+          }
+          if (raw.length === 6 && /^[0-9a-fA-F]{6}$/.test(raw)) {
+            return {
+              r: parseInt(raw.slice(0, 2), 16),
+              g: parseInt(raw.slice(2, 4), 16),
+              b: parseInt(raw.slice(4, 6), 16),
+            };
+          }
+          return null;
+        };
+        const rgbToHex = (rgb) => {
+          const toHex = (channel) => clampChannel(channel).toString(16).padStart(2, "0").toUpperCase();
+          return `#${toHex(rgb.r)}${toHex(rgb.g)}${toHex(rgb.b)}`;
+        };
+        const mixRgb = (a, b, amount) => ({
+          r: Math.round(a.r + (b.r - a.r) * amount),
+          g: Math.round(a.g + (b.g - a.g) * amount),
+          b: Math.round(a.b + (b.b - a.b) * amount),
+        });
+        const rgbaColor = (rgb, alpha) =>
+          `rgba(${clampChannel(rgb.r)}, ${clampChannel(rgb.g)}, ${clampChannel(rgb.b)}, ${alpha})`;
+        const normalizeHexColor = (value) => {
+          const parsed = hexToRgb(value);
+          return parsed ? rgbToHex(parsed) : null;
+        };
+        const applyThemeHighlightColor = (value) => {
+          const normalized = normalizeHexColor(value) || "#2F86E9";
+          const base = hexToRgb(normalized) || {r: 47, g: 134, b: 233};
+          const black = {r: 0, g: 0, b: 0};
+          const white = {r: 255, g: 255, b: 255};
+          const darken = (amount) => mixRgb(base, black, amount);
+          const lighten = (amount) => mixRgb(base, white, amount);
+          const overlayBase = darken(0.48);
+          const borderBase = lighten(0.34);
+          const rootStyle = document.documentElement.style;
+          rootStyle.setProperty("--accent-600", rgbToHex(darken(0.28)));
+          rootStyle.setProperty("--accent-500", rgbToHex(base));
+          rootStyle.setProperty("--accent-250", rgbToHex(lighten(0.48)));
+          rootStyle.setProperty("--accent-175", rgbToHex(lighten(0.62)));
+          rootStyle.setProperty("--accent-150", rgbToHex(lighten(0.58)));
+          rootStyle.setProperty("--accent-050", rgbToHex(lighten(0.86)));
+          rootStyle.setProperty("--accent-overlay-soft", rgbaColor(overlayBase, 0.4));
+          rootStyle.setProperty("--accent-border-soft", rgbaColor(borderBase, 0.6));
+          return normalized;
+        };
+        const themeToken = (name, fallback) =>
+          (window.getComputedStyle(document.documentElement).getPropertyValue(name) || "").trim() || fallback;
+        let currentThemeHighlightColor = applyThemeHighlightColor("#2F86E9");
+        if (typeof invoke === "function") {
+          invoke("get_theme_highlight_color")
+            .then((color) => {
+              currentThemeHighlightColor = applyThemeHighlightColor(String(color || currentThemeHighlightColor));
+            })
+            .catch(() => {});
+        }
+        const tauriListen = window.__TAURI__?.event?.listen;
+        if (typeof tauriListen === "function") {
+          tauriListen("theme-highlight-color-changed", (event) => {
+            const normalized = normalizeHexColor(String(event?.payload || ""));
+            if (!normalized) return;
+            currentThemeHighlightColor = applyThemeHighlightColor(normalized);
+          }).catch(() => {});
+        }
         const clampName = (name) => {
           const limit = 34;
           if (!name || name.length <= limit) return name || "item";
@@ -205,8 +285,8 @@
             return [];
           }
           ctx.clearRect(0, 0, width, height);
-          ctx.fillStyle = "#1f5fbf";
-          ctx.strokeStyle = "#2f86e9";
+          ctx.fillStyle = themeToken("--accent-600", "#1F5FBF");
+          ctx.strokeStyle = themeToken("--accent-500", "#2F86E9");
           ctx.lineWidth = 1;
           ctx.beginPath();
           ctx.moveTo(radius, 0);
@@ -221,7 +301,7 @@
           ctx.closePath();
           ctx.fill();
           ctx.stroke();
-          ctx.strokeStyle = "#c7dafc";
+          ctx.strokeStyle = themeToken("--accent-250", "#C7DAFC");
           ctx.fillStyle = "transparent";
           ctx.lineWidth = 1.5;
           ctx.beginPath();
@@ -237,7 +317,7 @@
           ctx.lineTo(20, 14);
           ctx.lineTo(24.5, 14);
           ctx.stroke();
-          ctx.fillStyle = "#f3f6ff";
+          ctx.fillStyle = themeToken("--accent-050", "#F3F6FF");
           ctx.font = '600 13px "SF Pro Text", "Segoe UI", sans-serif';
           ctx.textBaseline = "middle";
           ctx.fillText(clampName(name), 30, Math.round(height / 2) + 0.5);

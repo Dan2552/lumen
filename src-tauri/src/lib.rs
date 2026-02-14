@@ -216,6 +216,14 @@ pub fn run() {
             _ => {}
         })
         .on_menu_event(|app, event| {
+            let menu_id = event.id().as_ref();
+            if matches!(
+                menu_id,
+                "window_appearance_settings" | "appearance_settings" | "app_settings" | "preferences"
+            ) {
+                let _ = file_controller::open_appearance_window(app);
+                return;
+            }
             let path_to_copy = {
                 let state = app.state::<file_controller::FileContextMenuState>();
                 state
@@ -232,7 +240,6 @@ pub fn run() {
             let relative_paths = pending.relative_paths;
             let first_path = absolute_paths.first().cloned().unwrap_or_default();
 
-            let menu_id = event.id().as_ref();
             if menu_id == "copy_absolute_path" {
                 let _ = app.clipboard().write_text(absolute_paths.join("\n"));
                 if let Some(window) = app.get_webview_window(&target_window_label) {
@@ -304,6 +311,7 @@ pub fn run() {
             file_controller::validate_location_path,
             file_controller::goto_directory_suggestions,
             file_controller::new_window,
+            file_controller::open_appearance_window_command,
             file_controller::go_to_location,
             file_controller::set_window_title,
             file_controller::activate_tab,
@@ -321,6 +329,12 @@ pub fn run() {
             file_controller::create_directory,
             file_controller::create_file,
             file_controller::set_directory_sort,
+            file_controller::get_theme_base_color,
+            file_controller::set_theme_base_color,
+            file_controller::get_theme_highlight_color,
+            file_controller::set_theme_highlight_color,
+            file_controller::get_theme_lightness_offset,
+            file_controller::set_theme_lightness_offset,
             file_controller::set_tab_show_hidden,
             file_controller::set_tab_root,
             file_controller::fuzzy_search_start,

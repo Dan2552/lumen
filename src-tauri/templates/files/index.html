@@ -5,17 +5,58 @@
   data-home-path="{{ home_path }}"
   data-root-path="{{ root_path }}"
   data-show-hidden="{% if show_hidden %}true{% else %}false{% endif %}"
+  data-theme-base-color="{{ theme_base_color }}"
+  data-theme-highlight-color="{{ theme_highlight_color }}"
+  data-theme-lightness-offset="{{ theme_lightness_offset }}"
 >
   <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
   <style>
     #main-root.files-root {
+      --accent-700: #1b4fa3;
+      --accent-600: #1f5fbf;
+      --accent-550: #2060c4;
+      --accent-525: #2f6fce;
+      --accent-500: #2f86e9;
+      --accent-450: #4f8cdf;
+      --accent-400: #74a9ff;
+      --accent-300: #96c7ff;
+      --accent-250: #c7dafc;
+      --accent-200: #cfe0ff;
+      --accent-175: #d9e6ff;
+      --accent-150: #d7e6ff;
+      --accent-100: #eaf2ff;
+      --accent-075: #e4ecff;
+      --accent-050: #f3f6ff;
+      --accent-focus: #7fb3ff;
+      --accent-overlay-soft: rgba(48, 74, 120, 0.4);
+      --accent-overlay: rgba(48, 74, 120, 0.45);
+      --accent-border-soft: rgba(118, 167, 255, 0.6);
+      --accent-border: rgba(118, 167, 255, 0.72);
+      --accent-border-strong: rgba(114, 167, 255, 0.95);
+      --accent-border-selected: rgba(147, 192, 255, 0.85);
+      --surface-980: #1a1f29;
+      --surface-960: #262c3a;
+      --surface-940: #2b313f;
+      --surface-920: #323949;
+      --surface-900: #3a4254;
+      --surface-880: #596277;
+      --surface-border: #404759;
+      --surface-border-strong: #4b5364;
+      --surface-overlay: rgba(10, 13, 20, 0.45);
+      --text-muted: #c2c9d6;
+      --text-strong: #f4f7ff;
+      --selection-idle-bg: #525a6c;
+      --selection-idle-border: #677189;
+      --selection-idle-text: #e9eef9;
+      --tab-border: #454d5d;
+      --tab-active-border: #5b6477;
       height: 100vh;
       overflow: hidden;
       display: flex;
       flex-direction: column;
       margin: 0;
-      background: #2b313f;
-      color: #c2c9d6;
+      background: var(--surface-940);
+      color: var(--text-muted);
       font-family: "SF Pro Text", "SF Pro Display", "Segoe UI", sans-serif;
       font-size: 13px;
       line-height: 1.4;
@@ -29,8 +70,8 @@
       gap: 8px;
       min-height: 36px;
       padding: 4px 8px;
-      background: rgba(26, 31, 41, 0.95);
-      border-bottom: 1px solid #3a4151;
+      background: var(--surface-980);
+      border-bottom: 1px solid var(--surface-border);
       flex-shrink: 0;
     }
 
@@ -62,10 +103,10 @@
       min-width: 96px;
       max-width: 180px;
       padding: 0 10px;
-      border: 1px solid #4b5364;
+      border: 1px solid var(--tab-border);
       border-radius: 7px;
-      background: #3a4254;
-      color: #c4cada;
+      background: var(--surface-900);
+      color: var(--text-muted);
       display: inline-flex;
       align-items: center;
       gap: 8px;
@@ -75,14 +116,18 @@
       text-overflow: ellipsis;
       font-size: 12px;
       flex-shrink: 0;
+      appearance: none;
+      -webkit-appearance: none;
+      -webkit-tap-highlight-color: transparent;
+      outline: none;
     }
 
     .tab-shell {
       display: flex;
       align-items: center;
-      border: 1px solid #4b5364;
+      border: 1px solid var(--tab-border);
       border-radius: 7px;
-      background: #3a4254;
+      background: var(--surface-900);
       overflow: hidden;
       flex: 1 1 0;
       min-width: 0;
@@ -90,17 +135,21 @@
     }
 
     .tab-shell.sortable-chosen {
-      opacity: 0.72;
+      opacity: 1;
     }
 
     .tab-shell.sortable-ghost {
-      box-shadow: inset 0 0 0 2px #74a9ff;
+      box-shadow: inset 0 0 0 2px var(--accent-400);
       opacity: 0.6;
     }
 
+    .tab-shell.sortable-drag {
+      opacity: 0.72;
+    }
+
     .tab-shell.is-active {
-      background: #596277;
-      border-color: #6f7990;
+      background: var(--selection-idle-bg);
+      border-color: var(--tab-active-border);
     }
 
     .tab-shell .tab-button {
@@ -113,8 +162,16 @@
       border-radius: 0;
     }
 
+    .tab-shell .tab-button:active,
+    .tab-shell .tab-button:focus,
+    .tab-shell .tab-button:focus-visible {
+      background: transparent;
+      box-shadow: none;
+      outline: none;
+    }
+
     .tab-shell.is-active .tab-button {
-      color: #f4f7ff;
+      color: var(--text-strong);
     }
 
     .tab-close {
@@ -163,8 +220,8 @@
     .finder-layout {
       display: flex;
       height: calc(100% - 36px);
-      background: linear-gradient(180deg, #323949 0%, #2b313f 100%);
-      border-right: 1px solid #404759;
+      background: linear-gradient(180deg, var(--surface-920) 0%, var(--surface-940) 100%);
+      border-right: 1px solid var(--surface-border);
       overflow-x: auto;
       overflow-y: hidden;
     }
@@ -172,22 +229,22 @@
     .finder-column {
       width: 280px;
       min-width: 240px;
-      border-right: 1px solid #404759;
-      background: rgba(38, 44, 58, 0.45);
+      border-right: 1px solid var(--surface-border);
+      background: var(--surface-920);
       display: flex;
       flex-direction: column;
     }
 
     .finder-column.is-drop-target {
-      background: rgba(48, 74, 120, 0.4);
-      box-shadow: inset 0 0 0 1px rgba(118, 167, 255, 0.6);
+      background: var(--accent-overlay-soft);
+      box-shadow: inset 0 0 0 1px var(--accent-border-soft);
     }
 
     .preview-pane {
       width: 720px;
       min-width: 560px;
-      border-left: 1px solid #404759;
-      background: rgba(30, 36, 48, 0.72);
+      border-left: 1px solid var(--surface-border);
+      background: var(--surface-960);
       display: flex;
       flex-direction: column;
       cursor: default;
@@ -195,12 +252,12 @@
 
     .preview-header {
       padding: 10px 12px;
-      border-bottom: 1px solid #3b4354;
-      background: rgba(28, 34, 46, 0.78);
+      border-bottom: 1px solid var(--surface-border);
+      background: var(--surface-960);
     }
 
     .preview-title {
-      color: #dce3f2;
+      color: var(--text-strong);
       font-size: 13px;
       font-weight: 600;
       white-space: nowrap;
@@ -209,7 +266,7 @@
     }
 
     .preview-subtitle {
-      color: #97a1b6;
+      color: var(--text-muted);
       font-size: 11px;
       margin-top: 2px;
       white-space: nowrap;
@@ -221,6 +278,7 @@
       flex: 1;
       overflow: auto;
       padding: 12px;
+      background: var(--surface-960);
     }
 
     .preview-image {
@@ -228,8 +286,8 @@
       height: auto;
       object-fit: contain;
       border-radius: 8px;
-      border: 1px solid #46506a;
-      background: rgba(17, 22, 32, 0.8);
+      border: 1px solid var(--surface-border-strong);
+      background: var(--surface-980);
     }
 
     .preview-gallery {
@@ -240,10 +298,10 @@
     }
 
     .preview-gallery-item {
-      border: 1px solid #46506a;
+      border: 1px solid var(--surface-border-strong);
       border-radius: 8px;
       overflow: hidden;
-      background: rgba(17, 22, 32, 0.8);
+      background: var(--surface-980);
       min-height: 120px;
       display: flex;
       align-items: center;
@@ -261,22 +319,22 @@
       margin: 0;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
-      color: #c8d0df;
+      color: var(--text-muted);
       font-size: 12px;
       line-height: 1.5;
-      background: rgba(17, 22, 32, 0.7);
-      border: 1px solid #46506a;
+      background: var(--surface-980);
+      border: 1px solid var(--surface-border-strong);
       border-radius: 8px;
       padding: 10px;
       font-family: "SF Mono", "Menlo", "Consolas", monospace;
     }
 
     .preview-markdown {
-      color: #d2dbec;
+      color: var(--text-muted);
       font-size: 13px;
       line-height: 1.6;
-      background: rgba(17, 22, 32, 0.7);
-      border: 1px solid #46506a;
+      background: var(--surface-980);
+      border: 1px solid var(--surface-border-strong);
       border-radius: 8px;
       padding: 12px 14px;
       user-select: text !important;
@@ -309,7 +367,7 @@
     .preview-markdown h4,
     .preview-markdown h5,
     .preview-markdown h6 {
-      color: #f0f4ff;
+      color: var(--text-strong);
       margin: 14px 0 8px;
       line-height: 1.3;
     }
@@ -324,7 +382,7 @@
     }
 
     .preview-markdown a {
-      color: #96c7ff;
+      color: var(--accent-300);
     }
 
     .preview-markdown code {
@@ -337,9 +395,9 @@
 
     .preview-markdown pre {
       overflow: auto;
-      border: 1px solid #4f5c78;
+      border: 1px solid var(--surface-border-strong);
       border-radius: 7px;
-      background: rgba(12, 16, 26, 0.85);
+      background: var(--surface-940);
       padding: 10px;
     }
 
@@ -349,10 +407,10 @@
     }
 
     .preview-markdown blockquote {
-      border-left: 3px solid #4f8cdf;
+      border-left: 3px solid var(--accent-450);
       margin-left: 0;
       padding: 0 0 0 10px;
-      color: #aec1e0;
+      color: var(--accent-200);
     }
 
     .preview-markdown table {
@@ -363,7 +421,7 @@
 
     .preview-markdown th,
     .preview-markdown td {
-      border: 1px solid #4c5873;
+      border: 1px solid var(--surface-border-strong);
       padding: 6px 8px;
       text-align: left;
       vertical-align: top;
@@ -384,14 +442,14 @@
       min-width: 0;
       display: flex;
       overflow: visible;
-      border: 1px solid #46506a;
-      background: linear-gradient(180deg, rgba(21, 30, 48, 0.9) 0%, rgba(15, 24, 41, 0.85) 100%);
+      border: 1px solid var(--surface-border-strong);
+      background: linear-gradient(180deg, var(--surface-940) 0%, var(--surface-980) 100%);
     }
 
     .preview-zip-columns .finder-column {
       width: 280px;
       min-width: 240px;
-      background: rgba(38, 44, 58, 0.45);
+      background: var(--surface-960);
     }
 
     .preview-zip-columns .column-body {
@@ -407,7 +465,7 @@
     }
 
     .preview-zip-row-size {
-      color: #93a0ba;
+      color: var(--text-muted);
       font-size: 10px;
       margin-left: auto;
     }
@@ -416,9 +474,9 @@
       flex: 0 0 clamp(260px, 34%, 460px);
       min-width: 220px;
       max-width: 52%;
-      border: 1px solid #46506a;
+      border: 1px solid var(--surface-border-strong);
       border-radius: 10px;
-      background: linear-gradient(180deg, rgba(23, 34, 56, 0.9) 0%, rgba(13, 22, 39, 0.86) 100%);
+      background: linear-gradient(180deg, var(--surface-940) 0%, var(--surface-980) 100%);
       overflow: auto;
       padding: 10px;
     }
@@ -435,12 +493,12 @@
     }
 
     .preview-zip-empty {
-      color: #93a0ba;
+      color: var(--text-muted);
       font-size: 12px;
     }
 
     .preview-zip-loading {
-      color: #b8c5dc;
+      color: var(--text-muted);
       font-size: 12px;
     }
 
@@ -448,13 +506,13 @@
       width: 100%;
       min-height: 520px;
       height: calc(100vh - 180px);
-      border: 1px solid #46506a;
+      border: 1px solid var(--surface-border-strong);
       border-radius: 8px;
-      background: rgba(17, 22, 32, 0.8);
+      background: var(--surface-980);
     }
 
     .preview-loading {
-      color: #b8c5dc;
+      color: var(--text-muted);
       font-size: 12px;
       margin-bottom: 8px;
     }
@@ -463,23 +521,23 @@
       width: 100%;
       min-height: 520px;
       height: calc(100vh - 180px);
-      border: 1px solid #46506a;
+      border: 1px solid var(--surface-border-strong);
       border-radius: 8px;
-      background: radial-gradient(circle at 30% 20%, #3a445a 0%, #1a1f2d 100%);
+      background: radial-gradient(circle at 30% 20%, var(--surface-900) 0%, var(--surface-980) 100%);
     }
 
     .preview-video {
       width: 100%;
       min-height: 520px;
       height: calc(100vh - 180px);
-      border: 1px solid #46506a;
+      border: 1px solid var(--surface-border-strong);
       border-radius: 8px;
-      background: rgba(17, 22, 32, 0.8);
+      background: var(--surface-980);
     }
 
     .preview-note {
       margin-top: 10px;
-      color: #95a1b8;
+      color: var(--text-muted);
       font-size: 11px;
     }
 
@@ -488,9 +546,9 @@
       font-size: 12px;
       text-transform: uppercase;
       letter-spacing: 0.08em;
-      color: #9aa3b4;
-      border-bottom: 1px solid #3b4354;
-      background: rgba(34, 40, 52, 0.6);
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--surface-border);
+      background: var(--surface-960);
       display: flex;
       align-items: center;
       gap: 8px;
@@ -507,9 +565,9 @@
     .column-sort-button {
       height: 20px;
       border-radius: 6px;
-      border: 1px solid #4a556d;
-      background: rgba(42, 49, 65, 0.95);
-      color: #b5c0d8;
+      border: 1px solid var(--surface-border-strong);
+      background: var(--surface-900);
+      color: var(--text-muted);
       font-size: 10px;
       letter-spacing: 0.03em;
       text-transform: none;
@@ -521,9 +579,9 @@
     .column-root-button {
       height: 20px;
       border-radius: 6px;
-      border: 1px solid #4a556d;
-      background: rgba(42, 49, 65, 0.95);
-      color: #b5c0d8;
+      border: 1px solid var(--surface-border-strong);
+      background: var(--surface-900);
+      color: var(--text-muted);
       font-size: 10px;
       letter-spacing: 0.03em;
       text-transform: none;
@@ -533,9 +591,9 @@
     }
 
     .column-root-button.is-active {
-      border-color: rgba(114, 167, 255, 0.95);
-      background: rgba(26, 95, 192, 0.95);
-      color: #eaf2ff;
+      border-color: var(--accent-border-strong);
+      background: var(--accent-600);
+      color: var(--accent-100);
     }
 
     .column-body {
@@ -561,28 +619,28 @@
     }
 
     .finder-row:focus-visible {
-      outline: 1px solid #7fb3ff;
+      outline: 1px solid var(--accent-focus);
       outline-offset: -1px;
     }
 
     .finder-row.is-selected {
-      background: #525a6c;
-      border-color: #677189;
+      background: var(--selection-idle-bg);
+      border-color: var(--selection-idle-border);
       border-left-width: 2px;
-      color: #e9eef9;
+      color: var(--selection-idle-text);
     }
 
     .finder-row.is-drop-target {
-      background: rgba(48, 74, 120, 0.45);
-      border-color: rgba(118, 167, 255, 0.72);
+      background: var(--accent-overlay);
+      border-color: var(--accent-border);
       border-left-width: 2px;
-      color: #eaf2ff;
+      color: var(--accent-100);
     }
 
     .finder-column.is-active .finder-row.is-selected {
-      background: #1f5fbf;
-      border-color: #2f86e9;
-      color: #f3f6ff;
+      background: var(--accent-600);
+      border-color: var(--accent-500);
+      color: var(--accent-050);
     }
 
     .row-icon {
@@ -598,7 +656,7 @@
     }
 
     .finder-column.is-active .finder-row.is-selected .row-icon {
-      color: #d9e6ff;
+      color: var(--accent-175);
     }
 
     .row-name {
@@ -645,7 +703,7 @@
     }
 
     .drop-hint-title {
-      color: #e4ecff;
+      color: var(--accent-075);
       font-weight: 600;
     }
 
@@ -676,24 +734,24 @@
 
     .files-modal-card {
       width: min(440px, 92vw);
-      background: #2c3342;
-      border: 1px solid #46516a;
+      background: var(--surface-920);
+      border: 1px solid var(--surface-border-strong);
       border-radius: 10px;
       box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
-      color: #d9e2f4;
+      color: var(--text-strong);
       padding: 14px;
     }
 
     .files-modal-title {
       font-size: 13px;
       font-weight: 600;
-      color: #f2f6ff;
+      color: var(--accent-050);
     }
 
     .files-modal-message {
       margin-top: 8px;
       font-size: 12px;
-      color: #b7c2d8;
+      color: var(--text-muted);
       white-space: pre-wrap;
       word-break: break-word;
     }
@@ -703,9 +761,9 @@
       width: 100%;
       height: 30px;
       border-radius: 7px;
-      border: 1px solid #4b5771;
-      background: #1f2532;
-      color: #eaf1ff;
+      border: 1px solid var(--surface-border-strong);
+      background: var(--surface-980);
+      color: var(--text-strong);
       font: inherit;
       font-size: 12px;
       padding: 0 10px;
@@ -723,9 +781,9 @@
       min-width: 84px;
       height: 28px;
       border-radius: 7px;
-      border: 1px solid #53607b;
-      background: #3c465c;
-      color: #e4ecff;
+      border: 1px solid var(--surface-border-strong);
+      background: var(--surface-900);
+      color: var(--text-muted);
       font: inherit;
       font-size: 12px;
       cursor: default;
@@ -735,6 +793,94 @@
       border-color: #85454b;
       background: #6f3037;
       color: #ffe4e7;
+    }
+
+    .files-modal-button.is-primary {
+      border-color: var(--accent-500);
+      background: var(--accent-600);
+      color: var(--accent-050);
+    }
+
+    .theme-settings-card {
+      width: min(440px, 92vw);
+    }
+
+    .theme-settings-row {
+      margin-top: 10px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .theme-settings-row-label {
+      width: 84px;
+      color: var(--text-muted);
+      font-size: 11px;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      flex-shrink: 0;
+    }
+
+    .theme-settings-color {
+      width: 46px;
+      height: 32px;
+      border-radius: 7px;
+      border: 1px solid var(--surface-border-strong);
+      background: var(--surface-980);
+      padding: 2px;
+      box-sizing: border-box;
+      cursor: default;
+      flex-shrink: 0;
+    }
+
+    .theme-settings-hex {
+      margin-top: 0;
+      font-family: "SF Mono", "Menlo", "Consolas", monospace;
+      letter-spacing: 0.01em;
+      text-transform: uppercase;
+    }
+
+    .theme-settings-preview {
+      margin-top: 10px;
+      height: 34px;
+      border-radius: 8px;
+      border: 1px solid var(--accent-border);
+      background: linear-gradient(180deg, var(--accent-525) 0%, var(--accent-550) 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--accent-050);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+
+    .theme-settings-depth {
+      margin-top: 10px;
+      display: grid;
+      grid-template-columns: 80px 1fr auto;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .theme-settings-depth-label {
+      color: var(--text-muted);
+      font-size: 11px;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+    }
+
+    .theme-settings-depth-range {
+      width: 100%;
+      accent-color: var(--accent-500);
+    }
+
+    .theme-settings-depth-value {
+      min-width: 36px;
+      text-align: right;
+      color: var(--text-strong);
+      font-family: "SF Mono", "Menlo", "Consolas", monospace;
+      font-size: 11px;
     }
 
     .goto-modal {
@@ -811,9 +957,9 @@
     }
 
     .goto-suggestion-item.is-active {
-      border-color: #2f86e9;
-      background: #1f5fbf;
-      color: #f2f6ff;
+      border-color: var(--accent-500);
+      background: var(--accent-600);
+      color: var(--accent-050);
     }
 
     .goto-modal-error {
@@ -836,7 +982,7 @@
       border-radius: 7px;
       border: 1px solid #53607b;
       background: #3c465c;
-      color: #e4ecff;
+      color: var(--accent-075);
       font: inherit;
       font-size: 12px;
       cursor: default;
@@ -846,7 +992,7 @@
       position: fixed;
       inset: 0;
       z-index: 1510;
-      background: rgba(10, 13, 20, 0.45);
+      background: var(--surface-overlay);
       display: flex;
       align-items: flex-start;
       justify-content: center;
@@ -860,10 +1006,10 @@
     .command-modal-panel {
       width: min(780px, calc(100vw - 36px));
       max-height: min(70vh, 620px);
-      border: 1px solid #4a546b;
+      border: 1px solid var(--surface-border-strong);
       border-radius: 10px;
       overflow: hidden;
-      background: linear-gradient(180deg, #323a4a 0%, #2a3140 100%);
+      background: linear-gradient(180deg, var(--surface-920) 0%, var(--surface-960) 100%);
       box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
       display: flex;
       flex-direction: column;
@@ -872,11 +1018,11 @@
     .command-modal-input {
       height: 42px;
       border: none;
-      border-bottom: 1px solid #3f485d;
+      border-bottom: 1px solid var(--surface-border);
       outline: none;
       padding: 0 12px;
-      background: rgba(19, 23, 32, 0.9);
-      color: #e7ecf8;
+      background: var(--surface-980);
+      color: var(--text-strong);
       font: inherit;
       font-size: 14px;
     }
@@ -886,11 +1032,12 @@
       min-height: 44px;
       max-height: min(58vh, 520px);
       padding: 4px;
+      background: var(--surface-940);
     }
 
     .command-modal-empty {
       padding: 10px 12px;
-      color: #95a1b8;
+      color: var(--text-muted);
       font-size: 12px;
     }
 
@@ -900,7 +1047,7 @@
       border: 1px solid transparent;
       border-radius: 8px;
       background: transparent;
-      color: #d7deeb;
+      color: var(--text-strong);
       text-align: left;
       display: flex;
       align-items: center;
@@ -911,9 +1058,9 @@
     }
 
     .command-item.is-active {
-      border-color: #2f86e9;
-      background: #1f5fbf;
-      color: #f3f6ff;
+      border-color: var(--accent-500);
+      background: var(--accent-600);
+      color: var(--accent-050);
     }
 
     .command-item-label {
@@ -924,20 +1071,20 @@
     }
 
     .command-item-hint {
-      color: #9aa5bb;
+      color: var(--text-muted);
       font-size: 11px;
       flex-shrink: 0;
     }
 
     .command-item.is-active .command-item-hint {
-      color: #d7e6ff;
+      color: var(--accent-150);
     }
 
     .files-search {
       position: fixed;
       inset: 0;
       z-index: 1400;
-      background: rgba(10, 13, 20, 0.45);
+      background: var(--surface-overlay);
       display: flex;
       justify-content: center;
       align-items: flex-start;
@@ -951,10 +1098,10 @@
     .files-search-panel {
       width: min(1220px, calc(100vw - 36px));
       max-height: calc(100vh - 110px);
-      border: 1px solid #4a546b;
+      border: 1px solid var(--surface-border-strong);
       border-radius: 11px;
       overflow: hidden;
-      background: linear-gradient(180deg, #323a4a 0%, #2a3140 100%);
+      background: linear-gradient(180deg, var(--surface-920) 0%, var(--surface-960) 100%);
       box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
       display: flex;
       flex-direction: column;
@@ -964,6 +1111,7 @@
       display: flex;
       flex: 1;
       min-height: 0;
+      background: var(--surface-940);
     }
 
     .files-search-input-row {
@@ -972,8 +1120,8 @@
       align-items: center;
       gap: 8px;
       padding: 0 10px;
-      background: rgba(19, 23, 32, 0.9);
-      border-bottom: 1px solid #3f485d;
+      background: var(--surface-980);
+      border-bottom: 1px solid var(--surface-border);
     }
 
     .files-search-input {
@@ -982,7 +1130,7 @@
       outline: none;
       padding: 0 2px;
       background: transparent;
-      color: #e7ecf8;
+      color: var(--text-strong);
       font: inherit;
       font-size: 14px;
       flex: 1;
@@ -991,7 +1139,7 @@
 
     .files-search-inline-status {
       flex-shrink: 0;
-      color: #95a1b8;
+      color: var(--text-muted);
       font-size: 11px;
       min-width: 120px;
       text-align: right;
@@ -1004,12 +1152,13 @@
       padding: 6px;
       width: 52%;
       min-width: 340px;
-      border-right: 1px solid #3f485d;
+      border-right: 1px solid var(--surface-border);
+      background: var(--surface-940);
     }
 
     .files-search-status,
     .files-search-empty {
-      color: #aab6cd;
+      color: var(--text-muted);
       font-size: 12px;
       padding: 8px 10px;
     }
@@ -1028,7 +1177,7 @@
       flex: 1;
       min-width: 320px;
       overflow: auto;
-      background: rgba(28, 33, 45, 0.55);
+      background: var(--surface-960);
     }
 
     .search-preview-pane {
@@ -1039,7 +1188,7 @@
     }
 
     .files-search-preview-empty {
-      color: #95a1b8;
+      color: var(--text-muted);
       font-size: 12px;
       padding: 12px;
     }
@@ -1053,7 +1202,7 @@
       border: 1px solid transparent;
       border-radius: 7px;
       background: transparent;
-      color: #d4dbea;
+      color: var(--text-strong);
       text-align: left;
       padding: 4px 8px;
       font: inherit;
@@ -1061,9 +1210,9 @@
     }
 
     .files-search-item.is-active {
-      background: linear-gradient(180deg, #2f6fce 0%, #2060c4 100%);
-      border-color: rgba(147, 192, 255, 0.85);
-      color: #eaf2ff;
+      background: linear-gradient(180deg, var(--accent-525) 0%, var(--accent-550) 100%);
+      border-color: var(--accent-border-selected);
+      color: var(--accent-100);
     }
 
     .files-search-item-name {
@@ -1079,13 +1228,13 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      color: #8f9bb3;
+      color: var(--text-muted);
       font-size: 11px;
       max-width: 56%;
     }
 
     .files-search-item.is-active .files-search-item-path {
-      color: #cfe0ff;
+      color: var(--accent-200);
     }
   </style>
 
@@ -1768,6 +1917,375 @@
       const homePath = root.dataset.homePath || "";
       const rootPath = root.dataset.rootPath || "";
       const showHidden = (root.dataset.showHidden || "").toLowerCase() === "true";
+      const defaultThemeBaseColor = "#444F66";
+      const defaultThemeHighlightColor = "#2F86E9";
+      const defaultThemeLightnessOffset = 0;
+      const themeStorageKey = "lumen.theme.baseColor";
+      const themeHighlightStorageKey = "lumen.theme.highlightColor";
+      const themeLightnessStorageKey = "lumen.theme.lightnessOffset";
+      const readStoredThemeBaseColor = () => {
+        try {
+          return normalizeHexColor(window.localStorage?.getItem(themeStorageKey) || "");
+        } catch (_error) {
+          return null;
+        }
+      };
+      const writeStoredThemeBaseColor = (value) => {
+        const normalized = normalizeHexColor(value);
+        if (!normalized) return;
+        try {
+          window.localStorage?.setItem(themeStorageKey, normalized);
+        } catch (_error) {
+          // Ignore storage failures (private mode, quota, etc.).
+        }
+      };
+      const readStoredThemeHighlightColor = () => {
+        try {
+          return normalizeHexColor(window.localStorage?.getItem(themeHighlightStorageKey) || "");
+        } catch (_error) {
+          return null;
+        }
+      };
+      const writeStoredThemeHighlightColor = (value) => {
+        const normalized = normalizeHexColor(value);
+        if (!normalized) return;
+        try {
+          window.localStorage?.setItem(themeHighlightStorageKey, normalized);
+        } catch (_error) {
+          // Ignore storage failures (private mode, quota, etc.).
+        }
+      };
+      const normalizeThemeLightnessOffset = (value) => {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed)) return null;
+        return Math.max(-40, Math.min(40, Math.round(parsed)));
+      };
+      const readStoredThemeLightnessOffset = () => {
+        try {
+          return normalizeThemeLightnessOffset(window.localStorage?.getItem(themeLightnessStorageKey) || "");
+        } catch (_error) {
+          return null;
+        }
+      };
+      const writeStoredThemeLightnessOffset = (value) => {
+        const normalized = normalizeThemeLightnessOffset(value);
+        if (normalized === null) return;
+        try {
+          window.localStorage?.setItem(themeLightnessStorageKey, String(normalized));
+        } catch (_error) {
+          // Ignore storage failures (private mode, quota, etc.).
+        }
+      };
+      const clampChannel = (value) => Math.max(0, Math.min(255, Number(value) || 0));
+      const hexToRgb = (value) => {
+        const raw = String(value || "").trim().replace(/^#/, "");
+        if (raw.length === 3 && /^[0-9a-fA-F]{3}$/.test(raw)) {
+          return {
+            r: parseInt(raw[0] + raw[0], 16),
+            g: parseInt(raw[1] + raw[1], 16),
+            b: parseInt(raw[2] + raw[2], 16),
+          };
+        }
+        if (raw.length === 6 && /^[0-9a-fA-F]{6}$/.test(raw)) {
+          return {
+            r: parseInt(raw.slice(0, 2), 16),
+            g: parseInt(raw.slice(2, 4), 16),
+            b: parseInt(raw.slice(4, 6), 16),
+          };
+        }
+        return null;
+      };
+      const rgbToHex = (rgb) => {
+        const toHex = (channel) => clampChannel(channel).toString(16).padStart(2, "0").toUpperCase();
+        return `#${toHex(rgb.r)}${toHex(rgb.g)}${toHex(rgb.b)}`;
+      };
+      const mixRgb = (a, b, amount) => ({
+        r: Math.round(a.r + (b.r - a.r) * amount),
+        g: Math.round(a.g + (b.g - a.g) * amount),
+        b: Math.round(a.b + (b.b - a.b) * amount),
+      });
+      const rgbaColor = (rgb, alpha) =>
+        `rgba(${clampChannel(rgb.r)}, ${clampChannel(rgb.g)}, ${clampChannel(rgb.b)}, ${alpha})`;
+      const normalizeHexColor = (value) => {
+        const parsed = hexToRgb(value);
+        return parsed ? rgbToHex(parsed) : null;
+      };
+      const applyThemeAppearance = (
+        baseColor,
+        highlightColor = defaultThemeHighlightColor,
+        _lightnessOffset = defaultThemeLightnessOffset,
+      ) => {
+        const normalizedBaseColor = normalizeHexColor(baseColor) || defaultThemeBaseColor;
+        const normalizedHighlightColor = normalizeHexColor(highlightColor) || defaultThemeHighlightColor;
+        const normalizedLightnessOffset = defaultThemeLightnessOffset;
+        const base = hexToRgb(normalizedBaseColor) || {r: 47, g: 134, b: 233};
+        const highlight = hexToRgb(normalizedHighlightColor) || {r: 47, g: 134, b: 233};
+        const black = {r: 0, g: 0, b: 0};
+        const white = {r: 255, g: 255, b: 255};
+        const darkenBase = (amount) => mixRgb(base, black, amount);
+        const lightenBase = (amount) => mixRgb(base, white, amount);
+        const darkenHighlight = (amount) => mixRgb(highlight, black, amount);
+        const lightenHighlight = (amount) => mixRgb(highlight, white, amount);
+        const adjustSurfaceRgb = (rgb) => rgb;
+        const toHex = (rgb) => rgbToHex(rgb);
+        const toRgba = (rgb, alpha) => rgbaColor(rgb, alpha);
+        const surfaceHex = (rgb) => rgbToHex(adjustSurfaceRgb(rgb));
+        const surfaceRgba = (rgb, alpha) => rgbaColor(adjustSurfaceRgb(rgb), alpha);
+        const themeVars = {};
+        const setThemeVar = (name, cssValue) => {
+          root.style.setProperty(name, cssValue);
+          themeVars[name] = cssValue;
+        };
+        const ensureThemeStyleOverride = () => {
+          const styleId = "files-theme-style-override";
+          const existing = document.getElementById(styleId);
+          if (existing) return existing;
+          const created = document.createElement("style");
+          created.id = styleId;
+          document.head.appendChild(created);
+          return created;
+        };
+        const applyThemeStyleOverride = () => {
+          const styleEl = ensureThemeStyleOverride();
+          const declarations = Object.entries(themeVars)
+            .map(([name, cssValue]) => `${name}: ${cssValue};`)
+            .join("");
+          styleEl.textContent = `#main-root.files-root{${declarations}}`;
+        };
+        const overlayBase = darkenHighlight(0.48);
+        const borderBase = lightenHighlight(0.34);
+        const selectedBorderBase = lightenHighlight(0.45);
+        setThemeVar("--accent-700", toHex(darkenHighlight(0.40)));
+        setThemeVar("--accent-600", toHex(darkenHighlight(0.28)));
+        setThemeVar("--accent-550", toHex(darkenHighlight(0.24)));
+        setThemeVar("--accent-525", toHex(darkenHighlight(0.16)));
+        setThemeVar("--accent-500", toHex(highlight));
+        setThemeVar("--accent-450", toHex(lightenHighlight(0.12)));
+        setThemeVar("--accent-400", toHex(lightenHighlight(0.24)));
+        setThemeVar("--accent-300", toHex(lightenHighlight(0.35)));
+        setThemeVar("--accent-250", toHex(lightenHighlight(0.48)));
+        setThemeVar("--accent-200", toHex(lightenHighlight(0.56)));
+        setThemeVar("--accent-175", toHex(lightenHighlight(0.62)));
+        setThemeVar("--accent-150", toHex(lightenHighlight(0.58)));
+        setThemeVar("--accent-100", toHex(lightenHighlight(0.70)));
+        setThemeVar("--accent-075", toHex(lightenHighlight(0.78)));
+        setThemeVar("--accent-050", toHex(lightenHighlight(0.86)));
+        setThemeVar("--accent-focus", toHex(lightenHighlight(0.30)));
+        setThemeVar("--accent-overlay-soft", toRgba(overlayBase, 0.4));
+        setThemeVar("--accent-overlay", toRgba(overlayBase, 0.45));
+        setThemeVar("--accent-border-soft", toRgba(borderBase, 0.6));
+        setThemeVar("--accent-border", toRgba(borderBase, 0.72));
+        setThemeVar("--accent-border-strong", toRgba(borderBase, 0.95));
+        setThemeVar("--accent-border-selected", toRgba(selectedBorderBase, 0.85));
+        const channelLuminance = (value) => {
+          const normalized = clampChannel(value) / 255;
+          if (normalized <= 0.03928) return normalized / 12.92;
+          return ((normalized + 0.055) / 1.055) ** 2.4;
+        };
+        const baseLuminance =
+          0.2126 * channelLuminance(base.r) +
+          0.7152 * channelLuminance(base.g) +
+          0.0722 * channelLuminance(base.b);
+        const isLightBase = baseLuminance >= 0.58;
+        let surface980;
+        let surface960;
+        let surface940;
+        let surface920;
+        let surface900;
+        let surface880;
+        let surfaceBorder;
+        let surfaceBorderStrong;
+        let surfaceOverlayBase;
+        let textMuted;
+        let textStrong;
+        let idleSelectionBg;
+        let idleSelectionBorder;
+        let idleSelectionText;
+        let tabBorder;
+        let tabActiveBorder;
+        if (isLightBase) {
+          // Light background themes: keep surfaces near the picked color, with darker chrome.
+          surface980 = darkenBase(0.18);
+          surface960 = darkenBase(0.14);
+          surface940 = darkenBase(0.10);
+          surface920 = darkenBase(0.06);
+          surface900 = darkenBase(0.02);
+          surface880 = lightenBase(0.08);
+          surfaceBorder = darkenBase(0.24);
+          surfaceBorderStrong = darkenBase(0.32);
+          surfaceOverlayBase = darkenBase(0.42);
+          textMuted = darkenBase(0.72);
+          textStrong = darkenBase(0.84);
+          idleSelectionBg = darkenBase(0.24);
+          idleSelectionBorder = darkenBase(0.30);
+          idleSelectionText = lightenBase(0.92);
+          tabBorder = darkenBase(0.12);
+          tabActiveBorder = darkenBase(0.28);
+        } else {
+          // Dark background themes: deepen surfaces while preserving the picked hue.
+          surface980 = darkenBase(0.56);
+          surface960 = darkenBase(0.48);
+          surface940 = darkenBase(0.40);
+          surface920 = darkenBase(0.34);
+          surface900 = darkenBase(0.28);
+          surface880 = darkenBase(0.20);
+          surfaceBorder = darkenBase(0.24);
+          surfaceBorderStrong = lightenBase(0.10);
+          surfaceOverlayBase = darkenBase(0.78);
+          textMuted = lightenBase(0.70);
+          textStrong = lightenBase(0.88);
+          idleSelectionBg = lightenBase(0.15);
+          idleSelectionBorder = lightenBase(0.32);
+          idleSelectionText = lightenBase(0.88);
+          tabBorder = darkenBase(0.34);
+          tabActiveBorder = lightenBase(0.22);
+        }
+        const surfaceOverlay = surfaceRgba(surfaceOverlayBase, 0.45);
+        setThemeVar("--surface-980", surfaceHex(surface980));
+        setThemeVar("--surface-960", surfaceHex(surface960));
+        setThemeVar("--surface-940", surfaceHex(surface940));
+        setThemeVar("--surface-920", surfaceHex(surface920));
+        setThemeVar("--surface-900", surfaceHex(surface900));
+        setThemeVar("--surface-880", surfaceHex(surface880));
+        setThemeVar("--surface-border", surfaceHex(surfaceBorder));
+        setThemeVar("--surface-border-strong", surfaceHex(surfaceBorderStrong));
+        setThemeVar("--surface-overlay", surfaceOverlay);
+        setThemeVar("--text-muted", toHex(textMuted));
+        setThemeVar("--text-strong", toHex(textStrong));
+        setThemeVar("--selection-idle-bg", toHex(idleSelectionBg));
+        setThemeVar("--selection-idle-border", toHex(idleSelectionBorder));
+        setThemeVar("--selection-idle-text", toHex(idleSelectionText));
+        setThemeVar("--tab-border", surfaceHex(tabBorder));
+        setThemeVar("--tab-active-border", surfaceHex(tabActiveBorder));
+        applyThemeStyleOverride();
+        root.dataset.themeBaseColor = normalizedBaseColor;
+        root.dataset.themeHighlightColor = normalizedHighlightColor;
+        root.dataset.themeLightnessOffset = String(normalizedLightnessOffset);
+        window.__filesThemeBaseColor = normalizedBaseColor;
+        window.__filesThemeHighlightColor = normalizedHighlightColor;
+        window.__filesThemeLightnessOffset = normalizedLightnessOffset;
+        writeStoredThemeBaseColor(normalizedBaseColor);
+        writeStoredThemeHighlightColor(normalizedHighlightColor);
+        writeStoredThemeLightnessOffset(normalizedLightnessOffset);
+        return {
+          baseColor: normalizedBaseColor,
+          highlightColor: normalizedHighlightColor,
+          lightnessOffset: normalizedLightnessOffset,
+        };
+      };
+      const themeToken = (name, fallback) =>
+        (window.getComputedStyle(root).getPropertyValue(name) || "").trim() || fallback;
+      const datasetThemeBaseColor = normalizeHexColor(root.dataset.themeBaseColor || "");
+      const datasetThemeHighlightColor = normalizeHexColor(root.dataset.themeHighlightColor || "");
+      const windowCachedThemeBaseColor = normalizeHexColor(window.__filesThemeBaseColor || "");
+      const windowCachedThemeHighlightColor = normalizeHexColor(window.__filesThemeHighlightColor || "");
+      const datasetThemeLightnessOffset = normalizeThemeLightnessOffset(root.dataset.themeLightnessOffset || "");
+      const windowCachedThemeLightnessOffset = normalizeThemeLightnessOffset(window.__filesThemeLightnessOffset);
+      const storedThemeBaseColor = readStoredThemeBaseColor();
+      const storedThemeHighlightColor = readStoredThemeHighlightColor();
+      const storedThemeLightnessOffset = readStoredThemeLightnessOffset();
+      const initialThemeBaseColor =
+        windowCachedThemeBaseColor || storedThemeBaseColor || datasetThemeBaseColor || defaultThemeBaseColor;
+      const initialThemeHighlightColor =
+        windowCachedThemeHighlightColor ||
+        storedThemeHighlightColor ||
+        datasetThemeHighlightColor ||
+        defaultThemeHighlightColor;
+      let currentThemeLightnessOffset =
+        windowCachedThemeLightnessOffset ??
+        storedThemeLightnessOffset ??
+        datasetThemeLightnessOffset ??
+        defaultThemeLightnessOffset;
+      let currentThemeBaseColor = initialThemeBaseColor;
+      let currentThemeHighlightColor = initialThemeHighlightColor;
+      {
+        const appliedTheme = applyThemeAppearance(
+          initialThemeBaseColor,
+          initialThemeHighlightColor,
+          currentThemeLightnessOffset,
+        );
+        currentThemeBaseColor = appliedTheme.baseColor;
+        currentThemeHighlightColor = appliedTheme.highlightColor;
+        currentThemeLightnessOffset = appliedTheme.lightnessOffset;
+      }
+      let themeBaseChangedUnlisten = null;
+      let themeHighlightChangedUnlisten = null;
+      let themeLightnessChangedUnlisten = null;
+      const settingsInvoke = window.__TAURI__?.core?.invoke;
+      const tauriListen = window.__TAURI__?.event?.listen;
+      if (typeof tauriListen === "function") {
+        Promise.resolve(
+          tauriListen("theme-base-color-changed", (event) => {
+            const nextColor = String(event?.payload || "");
+            const normalized = normalizeHexColor(nextColor);
+            if (!normalized) return;
+            const appliedTheme = applyThemeAppearance(
+              normalized,
+              currentThemeHighlightColor,
+              currentThemeLightnessOffset,
+            );
+            currentThemeBaseColor = appliedTheme.baseColor;
+            currentThemeHighlightColor = appliedTheme.highlightColor;
+            currentThemeLightnessOffset = appliedTheme.lightnessOffset;
+            syncThemeSettingsInputs(
+              currentThemeBaseColor,
+              currentThemeHighlightColor,
+              currentThemeLightnessOffset,
+            );
+          }),
+        )
+          .then((unlisten) => {
+            themeBaseChangedUnlisten = typeof unlisten === "function" ? unlisten : null;
+          })
+          .catch(() => {});
+        Promise.resolve(
+          tauriListen("theme-highlight-color-changed", (event) => {
+            const nextColor = String(event?.payload || "");
+            const normalized = normalizeHexColor(nextColor);
+            if (!normalized) return;
+            const appliedTheme = applyThemeAppearance(
+              currentThemeBaseColor,
+              normalized,
+              currentThemeLightnessOffset,
+            );
+            currentThemeBaseColor = appliedTheme.baseColor;
+            currentThemeHighlightColor = appliedTheme.highlightColor;
+            currentThemeLightnessOffset = appliedTheme.lightnessOffset;
+            syncThemeSettingsInputs(
+              currentThemeBaseColor,
+              currentThemeHighlightColor,
+              currentThemeLightnessOffset,
+            );
+          }),
+        )
+          .then((unlisten) => {
+            themeHighlightChangedUnlisten = typeof unlisten === "function" ? unlisten : null;
+          })
+          .catch(() => {});
+        Promise.resolve(
+          tauriListen("theme-lightness-offset-changed", (event) => {
+            const normalizedOffset = normalizeThemeLightnessOffset(event?.payload);
+            if (normalizedOffset === null) return;
+            const appliedTheme = applyThemeAppearance(
+              currentThemeBaseColor,
+              currentThemeHighlightColor,
+              normalizedOffset,
+            );
+            currentThemeBaseColor = appliedTheme.baseColor;
+            currentThemeHighlightColor = appliedTheme.highlightColor;
+            currentThemeLightnessOffset = appliedTheme.lightnessOffset;
+            syncThemeSettingsInputs(
+              currentThemeBaseColor,
+              currentThemeHighlightColor,
+              currentThemeLightnessOffset,
+            );
+          }),
+        )
+          .then((unlisten) => {
+            themeLightnessChangedUnlisten = typeof unlisten === "function" ? unlisten : null;
+          })
+          .catch(() => {});
+      }
       const getCurrentWindowHandle = window.__TAURI__?.window?.getCurrentWindow;
       const isMacOS = /\bMac\b/i.test(navigator.platform || "") || /\bMac OS X\b/i.test(navigator.userAgent || "");
       if (isMacOS && window.htmx?.config) {
@@ -1898,6 +2416,17 @@
       const commandModal = root.querySelector("#command-modal");
       const commandInput = root.querySelector("#command-modal-input");
       const commandList = root.querySelector("#command-modal-list");
+      const themeSettingsModal = root.querySelector("#theme-settings-modal");
+      const themeSettingsColor = root.querySelector("#theme-settings-color");
+      const themeSettingsHex = root.querySelector("#theme-settings-hex");
+      const themeSettingsHighlightColor = root.querySelector("#theme-settings-highlight-color");
+      const themeSettingsHighlightHex = root.querySelector("#theme-settings-highlight-hex");
+      const themeSettingsDepthRange = root.querySelector("#theme-settings-depth-range");
+      const themeSettingsDepthValue = root.querySelector("#theme-settings-depth-value");
+      const themeSettingsPreview = root.querySelector("#theme-settings-preview");
+      const themeSettingsReset = root.querySelector("#theme-settings-reset");
+      const themeSettingsCancel = root.querySelector("#theme-settings-cancel");
+      const themeSettingsSave = root.querySelector("#theme-settings-save");
       let dropTargetColumn = null;
       let dropTargetRow = null;
       let externalDragPaths = [];
@@ -1919,6 +2448,9 @@
       let commandSelectionIndex = 0;
       let commandModalIgnoreBackdropUntil = 0;
       let commandModalIgnoreInteractionsUntil = 0;
+      let themeSettingsOriginalColor = currentThemeBaseColor;
+      let themeSettingsOriginalHighlightColor = currentThemeHighlightColor;
+      let themeSettingsOriginalLightnessOffset = currentThemeLightnessOffset;
       let gotoSuggestDebounceTimer = null;
       let gotoSuggestGeneration = 0;
       let gotoSuggestionIndex = -1;
@@ -1927,10 +2459,15 @@
       let lastSearchResultsHtml = "";
       window.__filesScrollStateByTab = window.__filesScrollStateByTab || {};
       window.__filesDirectorySignatureByTab = window.__filesDirectorySignatureByTab || {};
+      window.__filesDirectoryPathKeyByTab = window.__filesDirectoryPathKeyByTab || {};
       const getScrollState = () => window.__filesScrollStateByTab[activeTabId] || null;
       const getDirectorySignature = () => window.__filesDirectorySignatureByTab[activeTabId] || null;
+      const getDirectoryPathKey = () => window.__filesDirectoryPathKeyByTab[activeTabId] || null;
       const setDirectorySignature = (signature) => {
         window.__filesDirectorySignatureByTab[activeTabId] = signature;
+      };
+      const setDirectoryPathKey = (pathKey) => {
+        window.__filesDirectoryPathKeyByTab[activeTabId] = pathKey;
       };
       const saveScrollState = () => {
         const state = {
@@ -2681,8 +3218,8 @@
           return null;
         }
         ctx.clearRect(0, 0, width, height);
-        ctx.fillStyle = "#1f5fbf";
-        ctx.strokeStyle = "#2f86e9";
+        ctx.fillStyle = themeToken("--accent-600", "#1F5FBF");
+        ctx.strokeStyle = themeToken("--accent-500", "#2F86E9");
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(radius, 0);
@@ -2699,7 +3236,9 @@
         ctx.stroke();
 
         // Draw a small folder/file glyph so the drag image matches row semantics.
-        ctx.strokeStyle = isDir ? "#9cc8ff" : "#c7dafc";
+        ctx.strokeStyle = isDir
+          ? themeToken("--accent-300", "#9CC8FF")
+          : themeToken("--accent-250", "#C7DAFC");
         ctx.fillStyle = "transparent";
         ctx.lineWidth = 1.5;
         if (isDir) {
@@ -2733,7 +3272,7 @@
           ctx.stroke();
         }
 
-        ctx.fillStyle = "#f3f6ff";
+        ctx.fillStyle = themeToken("--accent-050", "#F3F6FF");
         ctx.font = '600 13px "SF Pro Text", "Segoe UI", sans-serif';
         ctx.textBaseline = "middle";
         ctx.fillText(clampName(name), 30, Math.round(height / 2) + 0.5);
@@ -2902,6 +3441,14 @@
           logNav("new_window failed", {error: String(error)});
         }
       };
+      const openAppearanceWindow = async () => {
+        if (typeof invoke !== "function") return;
+        try {
+          await invoke("open_appearance_window_command");
+        } catch (error) {
+          logNav("open_appearance_window_command failed", {error: String(error)});
+        }
+      };
       const closeTabOrWindow = async () => {
         if (typeof invoke !== "function") {
           if (activeTabId && activeTabId !== "default") {
@@ -2928,6 +3475,7 @@
       const isSearchOpen = () => !!searchRoot && !searchRoot.hidden;
       const isGotoOpen = () => !!gotoModal && !gotoModal.hidden;
       const isCommandOpen = () => !!commandModal && !commandModal.hidden;
+      const isThemeSettingsOpen = () => !!themeSettingsModal && !themeSettingsModal.hidden;
       const runContextTerminalCommand = async (directoryPath, commandId) => {
         if (typeof invoke !== "function") return;
         const path = String(directoryPath || "");
@@ -3177,7 +3725,7 @@
       const canAutoRefreshDirectories = () => {
         if (dragInProgress) return false;
         if (modalRoot && !modalRoot.hidden) return false;
-        if (isSearchOpen() || isGotoOpen() || isCommandOpen()) return false;
+        if (isSearchOpen() || isGotoOpen() || isCommandOpen() || isThemeSettingsOpen()) return false;
         return true;
       };
       const pollDirectoryChanges = () => {
@@ -3186,12 +3734,19 @@
         if (!canAutoRefreshDirectories()) return;
         const paths = visibleDirectoryPaths();
         if (paths.length === 0) return;
+        const pathKey = paths.join("\n");
 
         directorySyncInFlight = true;
         invoke("visible_directories_signature", {pathsJson: JSON.stringify(paths)})
           .then((signature) => {
             const next = String(signature || "");
             const previous = getDirectorySignature();
+            const previousPathKey = getDirectoryPathKey();
+            if (previousPathKey !== pathKey) {
+              setDirectoryPathKey(pathKey);
+              setDirectorySignature(next);
+              return;
+            }
             if (!previous) {
               setDirectorySignature(next);
               return;
@@ -3590,6 +4145,187 @@
           gotoInput.select();
         }, 0);
       };
+      const formatThemeLightnessOffset = (offset) => {
+        const normalized = normalizeThemeLightnessOffset(offset) ?? defaultThemeLightnessOffset;
+        if (normalized > 0) return `+${normalized}`;
+        return String(normalized);
+      };
+      const syncThemeSettingsInputs = (
+        baseColor,
+        highlightColor = currentThemeHighlightColor,
+        lightnessOffset = currentThemeLightnessOffset,
+      ) => {
+        const normalizedBase = normalizeHexColor(baseColor) || currentThemeBaseColor || defaultThemeBaseColor;
+        const normalizedHighlight =
+          normalizeHexColor(highlightColor) || currentThemeHighlightColor || defaultThemeHighlightColor;
+        const normalizedLightnessOffset =
+          normalizeThemeLightnessOffset(lightnessOffset) ?? currentThemeLightnessOffset ?? defaultThemeLightnessOffset;
+        if (themeSettingsColor) {
+          themeSettingsColor.value = normalizedBase;
+        }
+        if (themeSettingsHex) {
+          themeSettingsHex.value = normalizedBase;
+        }
+        if (themeSettingsHighlightColor) {
+          themeSettingsHighlightColor.value = normalizedHighlight;
+        }
+        if (themeSettingsHighlightHex) {
+          themeSettingsHighlightHex.value = normalizedHighlight;
+        }
+        if (themeSettingsDepthRange) {
+          themeSettingsDepthRange.value = String(normalizedLightnessOffset);
+        }
+        if (themeSettingsDepthValue) {
+          themeSettingsDepthValue.textContent = formatThemeLightnessOffset(normalizedLightnessOffset);
+        }
+        if (themeSettingsPreview) {
+          themeSettingsPreview.textContent = `Background ${normalizedBase} | Highlight ${normalizedHighlight} | Lightness ${formatThemeLightnessOffset(normalizedLightnessOffset)}`;
+        }
+      };
+      const readThemeSettingsBaseColor = (preferred = "hex") => {
+        const fromHex = normalizeHexColor(themeSettingsHex?.value || "");
+        const fromPicker = normalizeHexColor(themeSettingsColor?.value || "");
+        if (preferred === "picker") {
+          if (fromPicker) return fromPicker;
+          if (fromHex) return fromHex;
+        } else {
+          if (fromHex) return fromHex;
+          if (fromPicker) return fromPicker;
+        }
+        return normalizeHexColor(currentThemeBaseColor) || defaultThemeBaseColor;
+      };
+      const readThemeSettingsHighlightColor = (preferred = "hex") => {
+        const fromHex = normalizeHexColor(themeSettingsHighlightHex?.value || "");
+        const fromPicker = normalizeHexColor(themeSettingsHighlightColor?.value || "");
+        if (preferred === "picker") {
+          if (fromPicker) return fromPicker;
+          if (fromHex) return fromHex;
+        } else {
+          if (fromHex) return fromHex;
+          if (fromPicker) return fromPicker;
+        }
+        return normalizeHexColor(currentThemeHighlightColor) || defaultThemeHighlightColor;
+      };
+      const readThemeSettingsLightnessOffset = () => {
+        const fromRange = normalizeThemeLightnessOffset(themeSettingsDepthRange?.value);
+        if (fromRange !== null) return fromRange;
+        return normalizeThemeLightnessOffset(currentThemeLightnessOffset) ?? defaultThemeLightnessOffset;
+      };
+      const previewThemeSettingsAppearance = ({basePreferred = "hex", highlightPreferred = "hex"} = {}) => {
+        const normalizedBase = readThemeSettingsBaseColor(basePreferred);
+        const normalizedHighlight = readThemeSettingsHighlightColor(highlightPreferred);
+        const normalizedLightnessOffset = readThemeSettingsLightnessOffset();
+        const appliedTheme = applyThemeAppearance(
+          normalizedBase,
+          normalizedHighlight,
+          normalizedLightnessOffset,
+        );
+        currentThemeBaseColor = appliedTheme.baseColor;
+        currentThemeHighlightColor = appliedTheme.highlightColor;
+        currentThemeLightnessOffset = appliedTheme.lightnessOffset;
+        syncThemeSettingsInputs(
+          currentThemeBaseColor,
+          currentThemeHighlightColor,
+          currentThemeLightnessOffset,
+        );
+      };
+      const closeThemeSettingsModal = ({persist = false} = {}) => {
+        if (!themeSettingsModal) return;
+        themeSettingsModal.hidden = true;
+        if (!persist) {
+          const appliedTheme = applyThemeAppearance(
+            themeSettingsOriginalColor,
+            themeSettingsOriginalHighlightColor,
+            themeSettingsOriginalLightnessOffset,
+          );
+          currentThemeBaseColor = appliedTheme.baseColor;
+          currentThemeHighlightColor = appliedTheme.highlightColor;
+          currentThemeLightnessOffset = appliedTheme.lightnessOffset;
+          syncThemeSettingsInputs(
+            currentThemeBaseColor,
+            currentThemeHighlightColor,
+            currentThemeLightnessOffset,
+          );
+        }
+      };
+      const openThemeSettingsModal = () => {
+        if (!themeSettingsModal) return;
+        closeSearchPalette();
+        closeGoToModal();
+        if (isCommandOpen()) {
+          closeCommandModal();
+        }
+        themeSettingsOriginalColor = currentThemeBaseColor;
+        themeSettingsOriginalHighlightColor = currentThemeHighlightColor;
+        themeSettingsOriginalLightnessOffset = currentThemeLightnessOffset;
+        syncThemeSettingsInputs(
+          currentThemeBaseColor,
+          currentThemeHighlightColor,
+          currentThemeLightnessOffset,
+        );
+        themeSettingsModal.hidden = false;
+        setTimeout(() => {
+          if (themeSettingsColor) {
+            themeSettingsColor.focus();
+          } else {
+            themeSettingsHex?.focus();
+          }
+        }, 0);
+      };
+      const persistThemeAppearance = async (baseColor, highlightColor, lightnessOffset) => {
+        const normalizedBase = normalizeHexColor(baseColor);
+        const normalizedHighlight = normalizeHexColor(highlightColor);
+        const normalizedLightnessOffset = normalizeThemeLightnessOffset(lightnessOffset);
+        if (!normalizedBase) return false;
+        if (!normalizedHighlight) return false;
+        if (normalizedLightnessOffset === null) return false;
+        if (typeof settingsInvoke === "function") {
+          try {
+            const [savedBaseColor, savedHighlightColor, savedLightness] = await Promise.all([
+              settingsInvoke("set_theme_base_color", {color: normalizedBase}),
+              settingsInvoke("set_theme_highlight_color", {color: normalizedHighlight}),
+              settingsInvoke("set_theme_lightness_offset", {offset: normalizedLightnessOffset}),
+            ]);
+            const finalBase = normalizeHexColor(String(savedBaseColor || normalizedBase)) || normalizedBase;
+            const finalHighlight =
+              normalizeHexColor(String(savedHighlightColor || normalizedHighlight)) || normalizedHighlight;
+            const finalLightness =
+              normalizeThemeLightnessOffset(savedLightness) ?? normalizedLightnessOffset;
+            const appliedTheme = applyThemeAppearance(finalBase, finalHighlight, finalLightness);
+            currentThemeBaseColor = appliedTheme.baseColor;
+            currentThemeHighlightColor = appliedTheme.highlightColor;
+            currentThemeLightnessOffset = appliedTheme.lightnessOffset;
+            syncThemeSettingsInputs(
+              currentThemeBaseColor,
+              currentThemeHighlightColor,
+              currentThemeLightnessOffset,
+            );
+            return true;
+          } catch (error) {
+            await openFilesModal({
+              title: "Appearance",
+              message: String(error || "Failed to save appearance settings."),
+              confirmLabel: "Close",
+              kind: "confirm",
+            });
+            return false;
+          }
+        }
+        const appliedTheme = applyThemeAppearance(
+          normalizedBase,
+          normalizedHighlight,
+          normalizedLightnessOffset,
+        );
+        currentThemeBaseColor = appliedTheme.baseColor;
+        currentThemeHighlightColor = appliedTheme.highlightColor;
+        currentThemeLightnessOffset = appliedTheme.lightnessOffset;
+        syncThemeSettingsInputs(
+          currentThemeBaseColor,
+          currentThemeHighlightColor,
+          currentThemeLightnessOffset,
+        );
+        return true;
+      };
       const submitGoToModal = () => {
         if (!gotoInput || typeof invoke !== "function") return;
         const value = String(gotoInput.value || "").trim();
@@ -3828,6 +4564,14 @@
           },
         });
         tabItems.push({
+          label: "Window: Settings",
+          hint: "Cmd+,",
+          run: () => {
+            closeCommandModal();
+            openAppearanceWindow();
+          },
+        });
+        tabItems.push({
           label: showHidden ? "Tab: Hide hidden files" : "Tab: Show hidden files",
           hint: "",
           run: () => {
@@ -4019,6 +4763,7 @@
         if (!commandModal || !commandInput) return;
         closeSearchPalette();
         closeGoToModal();
+        closeThemeSettingsModal({persist: false});
         const now = Date.now();
         commandModalIgnoreBackdropUntil = options.ignoreInitialBackdropClick ? now + 260 : 0;
         commandModalIgnoreInteractionsUntil = options.ignoreInitialBackdropClick ? now + 260 : 0;
@@ -4192,6 +4937,135 @@
         gotoModal.addEventListener("click", (event) => {
           if (event.target === gotoModal) {
             closeGoToModal();
+          }
+        });
+      }
+      syncThemeSettingsInputs(
+        currentThemeBaseColor,
+        currentThemeHighlightColor,
+        currentThemeLightnessOffset,
+      );
+      if (themeSettingsColor) {
+        themeSettingsColor.addEventListener("input", () => {
+          previewThemeSettingsAppearance({basePreferred: "picker"});
+        });
+        themeSettingsColor.addEventListener("change", () => {
+          previewThemeSettingsAppearance({basePreferred: "picker"});
+        });
+      }
+      if (themeSettingsHighlightColor) {
+        themeSettingsHighlightColor.addEventListener("input", () => {
+          previewThemeSettingsAppearance({highlightPreferred: "picker"});
+        });
+        themeSettingsHighlightColor.addEventListener("change", () => {
+          previewThemeSettingsAppearance({highlightPreferred: "picker"});
+        });
+      }
+      if (themeSettingsDepthRange) {
+        themeSettingsDepthRange.addEventListener("input", () => {
+          previewThemeSettingsAppearance();
+        });
+        themeSettingsDepthRange.addEventListener("change", () => {
+          previewThemeSettingsAppearance();
+        });
+      }
+      if (themeSettingsHex) {
+        themeSettingsHex.addEventListener("input", () => {
+          previewThemeSettingsAppearance({basePreferred: "hex"});
+        });
+        themeSettingsHex.addEventListener("change", () => {
+          previewThemeSettingsAppearance({basePreferred: "hex"});
+        });
+        themeSettingsHex.addEventListener("keydown", async (event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            closeThemeSettingsModal({persist: false});
+            return;
+          }
+          if (event.key === "Enter") {
+            event.preventDefault();
+            event.stopPropagation();
+            const saved = await persistThemeAppearance(
+              readThemeSettingsBaseColor("hex"),
+              readThemeSettingsHighlightColor("hex"),
+              readThemeSettingsLightnessOffset(),
+            );
+            if (!saved) return;
+            themeSettingsOriginalColor = currentThemeBaseColor;
+            themeSettingsOriginalHighlightColor = currentThemeHighlightColor;
+            themeSettingsOriginalLightnessOffset = currentThemeLightnessOffset;
+            closeThemeSettingsModal({persist: true});
+          }
+        });
+      }
+      if (themeSettingsHighlightHex) {
+        themeSettingsHighlightHex.addEventListener("input", () => {
+          previewThemeSettingsAppearance({highlightPreferred: "hex"});
+        });
+        themeSettingsHighlightHex.addEventListener("change", () => {
+          previewThemeSettingsAppearance({highlightPreferred: "hex"});
+        });
+        themeSettingsHighlightHex.addEventListener("keydown", async (event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            closeThemeSettingsModal({persist: false});
+            return;
+          }
+          if (event.key === "Enter") {
+            event.preventDefault();
+            event.stopPropagation();
+            const saved = await persistThemeAppearance(
+              readThemeSettingsBaseColor("hex"),
+              readThemeSettingsHighlightColor("hex"),
+              readThemeSettingsLightnessOffset(),
+            );
+            if (!saved) return;
+            themeSettingsOriginalColor = currentThemeBaseColor;
+            themeSettingsOriginalHighlightColor = currentThemeHighlightColor;
+            themeSettingsOriginalLightnessOffset = currentThemeLightnessOffset;
+            closeThemeSettingsModal({persist: true});
+          }
+        });
+      }
+      if (themeSettingsCancel) {
+        themeSettingsCancel.addEventListener("click", () => {
+          closeThemeSettingsModal({persist: false});
+        });
+      }
+      if (themeSettingsReset) {
+        themeSettingsReset.addEventListener("click", async () => {
+          const saved = await persistThemeAppearance(
+            defaultThemeBaseColor,
+            defaultThemeHighlightColor,
+            defaultThemeLightnessOffset,
+          );
+          if (!saved) return;
+          themeSettingsOriginalColor = currentThemeBaseColor;
+          themeSettingsOriginalHighlightColor = currentThemeHighlightColor;
+          themeSettingsOriginalLightnessOffset = currentThemeLightnessOffset;
+          closeThemeSettingsModal({persist: true});
+        });
+      }
+      if (themeSettingsSave) {
+        themeSettingsSave.addEventListener("click", async () => {
+          const saved = await persistThemeAppearance(
+            readThemeSettingsBaseColor("picker"),
+            readThemeSettingsHighlightColor("picker"),
+            readThemeSettingsLightnessOffset(),
+          );
+          if (!saved) return;
+          themeSettingsOriginalColor = currentThemeBaseColor;
+          themeSettingsOriginalHighlightColor = currentThemeHighlightColor;
+          themeSettingsOriginalLightnessOffset = currentThemeLightnessOffset;
+          closeThemeSettingsModal({persist: true});
+        });
+      }
+      if (themeSettingsModal) {
+        themeSettingsModal.addEventListener("click", (event) => {
+          if (event.target === themeSettingsModal) {
+            closeThemeSettingsModal({persist: false});
           }
         });
       }
@@ -4707,6 +5581,15 @@
         if (modalRoot && !modalRoot.hidden) {
           return;
         }
+        if (isThemeSettingsOpen() && event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          closeThemeSettingsModal({persist: false});
+          return;
+        }
+        if (isThemeSettingsOpen()) {
+          return;
+        }
         if ((event.metaKey || event.ctrlKey) && event.altKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
           event.preventDefault();
           event.stopPropagation();
@@ -4748,6 +5631,12 @@
           openGoToModal();
           return;
         }
+        if ((event.metaKey || event.ctrlKey) && event.key === ",") {
+          event.preventDefault();
+          event.stopPropagation();
+          openAppearanceWindow();
+          return;
+        }
         if (
           event.key === "/" &&
           !event.metaKey &&
@@ -4756,7 +5645,8 @@
           !event.shiftKey &&
           !isCommandOpen() &&
           !isSearchOpen() &&
-          !isGotoOpen()
+          !isGotoOpen() &&
+          !isThemeSettingsOpen()
         ) {
           const activeTag = document.activeElement?.tagName || "";
           if (
@@ -5104,6 +5994,37 @@
       startDirectoryPolling();
 
       document.addEventListener("keydown", onKeyDown);
+      const themeAfterSettleHandler = (event) => {
+        if (event?.target !== root) return;
+        const nextTheme =
+          normalizeHexColor(window.__filesThemeBaseColor || "") ||
+          readStoredThemeBaseColor() ||
+          normalizeHexColor(root.dataset.themeBaseColor || "") ||
+          currentThemeBaseColor ||
+          defaultThemeBaseColor;
+        const nextHighlight =
+          normalizeHexColor(window.__filesThemeHighlightColor || "") ||
+          readStoredThemeHighlightColor() ||
+          normalizeHexColor(root.dataset.themeHighlightColor || "") ||
+          currentThemeHighlightColor ||
+          defaultThemeHighlightColor;
+        const nextLightnessOffset =
+          normalizeThemeLightnessOffset(window.__filesThemeLightnessOffset) ??
+          readStoredThemeLightnessOffset() ??
+          normalizeThemeLightnessOffset(root.dataset.themeLightnessOffset || "") ??
+          normalizeThemeLightnessOffset(currentThemeLightnessOffset) ??
+          defaultThemeLightnessOffset;
+        const appliedTheme = applyThemeAppearance(nextTheme, nextHighlight, nextLightnessOffset);
+        currentThemeBaseColor = appliedTheme.baseColor;
+        currentThemeHighlightColor = appliedTheme.highlightColor;
+        currentThemeLightnessOffset = appliedTheme.lightnessOffset;
+        syncThemeSettingsInputs(
+          currentThemeBaseColor,
+          currentThemeHighlightColor,
+          currentThemeLightnessOffset,
+        );
+      };
+      document.body.addEventListener("htmx:afterSettle", themeAfterSettleHandler);
       root.addEventListener("htmx:beforeRequest", () => {
         saveScrollState();
       });
@@ -5132,6 +6053,18 @@
             dragDropUnlisten();
             dragDropUnlisten = null;
           }
+          if (typeof themeBaseChangedUnlisten === "function") {
+            themeBaseChangedUnlisten();
+            themeBaseChangedUnlisten = null;
+          }
+          if (typeof themeHighlightChangedUnlisten === "function") {
+            themeHighlightChangedUnlisten();
+            themeHighlightChangedUnlisten = null;
+          }
+          if (typeof themeLightnessChangedUnlisten === "function") {
+            themeLightnessChangedUnlisten();
+            themeLightnessChangedUnlisten = null;
+          }
           if (window.__filesContextActionHandler) {
             window.__filesContextActionHandler = null;
           }
@@ -5147,6 +6080,7 @@
           }
           saveScrollState();
           document.removeEventListener("keydown", onKeyDown);
+          document.body.removeEventListener("htmx:afterSettle", themeAfterSettleHandler);
           window.removeEventListener("dragover", handleDomDragHover);
           document.removeEventListener("dragover", handleDomDragHover, true);
           root.removeEventListener("dragover", handleDomDragHover, true);
